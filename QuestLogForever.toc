@@ -1,0 +1,10 @@
+## Interface: 16001
+## Title: Quest Ledger Forever
+## Notes: The classic separate quest log, with modern features: quest chains, 3D arrow, reward upgrades, party quests (QuestMates) and more. /ledger
+## OptionalDeps: QuestMates
+## Author: Frank
+## Version: 2.1.0
+## SavedVariables: QuestLogForeverDB
+
+Chains.lua
+QuestLogForever.lua

@@ -1,0 +1,5 @@
+<Bindings>
+  <Binding name="QUESTLOGFOREVER_TOGGLE" header="QUESTLOGFOREVER" category="ADDONS">
+    QuestLogForever_Toggle()
+  </Binding>
+</Bindings>
