@@ -229,6 +229,7 @@ local function Dock()
     return
   end
   MatchMapHeight(true)
+  if QLF_ApplyMapPos then QLF_ApplyMapPos() end
   local scale = f:GetEffectiveScale() / UIParent:GetEffectiveScale()
   local mr, ml = WorldMapFrame:GetRight(), WorldMapFrame:GetLeft()
   local ms = WorldMapFrame:GetEffectiveScale() / UIParent:GetEffectiveScale()
@@ -1852,6 +1853,7 @@ local function ResetMapPos()
     if WorldMapFrame.SynchronizeDisplayState then pcall(WorldMapFrame.SynchronizeDisplayState, WorldMapFrame) end
   end
 end
+QLF_ApplyMapPos = ApplyMapPos
 local function SetupMapMove()
   if mapHandle or not WorldMapFrame then return end
   WorldMapFrame:SetMovable(true)
@@ -1892,6 +1894,7 @@ local function HookPureMap()
   SetupMapMove()
   WorldMapFrame:HookScript("OnShow", function()
     ApplyMapAlpha()
+    ApplyMapPos()  -- same frame: no visible jump from the default spot
     C_Timer.After(0, function() ApplyMapPos(); Dock() end)
   end)
   WorldMapFrame:HookScript("OnShow", function()
