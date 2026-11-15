@@ -378,11 +378,18 @@ for i = 1, NUM_ROWS do
       if e.q and Mates() then Mates().QuestTooltip(s, e.q, e.who) end
       return
     end
-    if e.header or not e.friends or #e.friends == 0 then return end
+    local hasFriends = e.friends and #e.friends > 0
+    if e.header or (not hasFriends and not e.inst) then return end
     GameTooltip:SetOwner(s, "ANCHOR_RIGHT")
-    GameTooltip:AddLine("Also on this quest:", 1, 0.82, 0)
-    for _, fr in ipairs(e.friends) do
-      GameTooltip:AddLine(fr.who .. (fr.complete and "  |cff4dff4d(done)|r" or ""), fr.color[1], fr.color[2], fr.color[3])
+    if e.inst then
+      GameTooltip:AddLine((e.inst == "raid" and "Raid" or "Dungeon") .. (e.instName and (": " .. e.instName) or ""),
+        e.inst == "raid" and 1 or 0.7, e.inst == "raid" and 0.5 or 0.55, e.inst == "raid" and 0.3 or 1)
+    end
+    if hasFriends then
+      GameTooltip:AddLine("Also on this quest:", 1, 0.82, 0)
+      for _, fr in ipairs(e.friends) do
+        GameTooltip:AddLine(fr.who .. (fr.complete and "  |cff4dff4d(done)|r" or ""), fr.color[1], fr.color[2], fr.color[3])
+      end
     end
     GameTooltip:Show()
   end)
@@ -1126,6 +1133,31 @@ f.units:SetScript("OnLeave", GameTooltip_Hide)
 f.arrow:Hide(); f.arrow.label:Hide(); f.units:Hide()
 
 ---------------------------------------------------------------- list build
+-- Is this a dungeon or raid quest? (quest tag first, then: is its zone heading a dungeon map?)
+local instCache = {}
+local function InstanceKind(qid, header)
+  if qid then
+    local tagID
+    if C_QuestLog and C_QuestLog.GetQuestTagInfo then
+      local ok, info = pcall(C_QuestLog.GetQuestTagInfo, qid)
+      if ok and type(info) == "table" then tagID = info.tagID end
+    elseif GetQuestTagInfo then
+      local ok, id = pcall(GetQuestTagInfo, qid)
+      if ok then tagID = id end
+    end
+    if tagID == 62 or tagID == 88 or tagID == 89 then return "raid" end
+    if tagID == 81 or tagID == 85 then return "dungeon" end
+  end
+  if not header then return end
+  if instCache[header] == nil then
+    instCache[header] = false
+    local id = MapIDForZoneName(header)
+    local info = id and C_Map and C_Map.GetMapInfo and C_Map.GetMapInfo(id)
+    if info and info.mapType == ((Enum and Enum.UIMapType and Enum.UIMapType.Dungeon) or 4) then instCache[header] = "dungeon" end
+  end
+  return instCache[header] or nil
+end
+
 local function BuildMine()
   wipe(entries)
   if ExpandQuestHeader then pcall(ExpandQuestHeader, 0) end
@@ -1141,8 +1173,9 @@ local function BuildMine()
         quests = quests + 1
         firstQuest = firstQuest or qid
         if not (header and collapsed[header]) then
+          local inst = (not DB or DB.instIcons ~= false) and InstanceKind(qid, header) or nil
           entries[#entries + 1] = { title = title, level = level, complete = complete, failed = failed,
-            qid = qid, index = i, group = group, friends = Friends(qid) }
+            qid = qid, index = i, group = group, friends = Friends(qid), inst = inst, instName = inst and header }
         end
       end
     end
@@ -1179,6 +1212,7 @@ end
 local function DrawMineRow(b, e)
   if e.header then
     b.icon:SetTexture(collapsed[e.title] and "Interface\\Buttons\\UI-PlusButton-Up" or "Interface\\Buttons\\UI-MinusButton-Up")
+    b.icon:SetTexCoord(0, 1, 0, 1)
     b.icon:SetVertexColor(1, 1, 1)
     b.icon:Show()
     b.text:SetPoint("LEFT", 20, 0)
@@ -1187,7 +1221,20 @@ local function DrawMineRow(b, e)
     b.text:SetTextColor(1, 0.82, 0)
     return
   end
-  b.icon:Hide()
+  local textLeft = 14
+  if e.inst then
+    -- portal icon: purple = dungeon, red = raid
+    local atlas = e.inst == "raid" and "Raid" or "Dungeon"
+    if not (b.icon.SetAtlas and b.icon:SetAtlas(atlas)) then
+      b.icon:SetTexture(e.inst == "raid" and "Interface\\Icons\\INV_Misc_Head_Dragon_01" or "Interface\\Icons\\INV_Misc_Key_14")
+      b.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    end
+    b.icon:SetVertexColor(1, 1, 1)
+    b.icon:Show()
+    textLeft = 20
+  else
+    b.icon:Hide()
+  end
   local c = DiffColor(e.level)
   b.text:SetText(("[%s] %s"):format(e.level or "?", e.title))
   b.text:SetTextColor(c.r, c.g, c.b)
@@ -1207,7 +1254,7 @@ local function DrawMineRow(b, e)
     t:Show()
   end
   if nd > 0 then right = right + nd * 9 + 2 end
-  b.text:SetPoint("LEFT", 14, 0)
+  b.text:SetPoint("LEFT", textLeft, 0)
   b.text:SetPoint("RIGHT", -right, 0)
   if e.qid == selectedID then b.sel:Show() end
 end
@@ -1995,6 +2042,9 @@ local OPTIONS = {
   { "Quest chain icon", function() return DB.chains ~= false end,
     function(v) DB.chains = v; Refresh() end, nil,
     "Book icon on the quest page that lists the whole quest chain." },
+  { "Dungeon and raid icons", function() return DB.instIcons ~= false end,
+    function(v) DB.instIcons = v; Refresh() end, nil,
+    "A portal icon in front of quests for a dungeon (purple) or raid (red)." },
   { "Reward markers (best price, upgrades)", function() return DB.rewardMarks ~= false end,
     function(v) DB.rewardMarks = v; Refresh(); if QLF_MarkQuestFrame then QLF_MarkQuestFrame() end end, nil,
     "Bag = sells for the most. Green arrow = an upgrade for your spec." },
