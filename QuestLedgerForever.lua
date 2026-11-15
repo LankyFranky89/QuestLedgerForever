@@ -1855,7 +1855,7 @@ local OPTIONS = {
     function(v) DB.mapClicks = v; DB.routeOpens = v end, nil,
     "Clicking a quest icon on the map or a quest in the tracker opens it in the Quest Ledger." },
   { header = "Map" },
-  { "Map's own quest list (? button)", function() return DB.pureMap == false end,
+  { "Default Quest Log on the map (? button)", function() return DB.pureMap == false end,
     function(v) if (DB.pureMap == false) ~= v then SlashCmdList.QUESTLEDGERFOREVER("map") end end, nil,
     "On: the map's ? button opens Blizzard's quest list as usual. Off: the ? is hidden and the map stays plain." },
   { "Same height as the Quest Ledger", function() return DB.matchHeight ~= false end,
@@ -2009,7 +2009,7 @@ SlashCmdList.QUESTLEDGERFOREVER = function(msg)
     Dock()
   elseif msg == "map" then
     DB.pureMap = not DB.pureMap
-    print("|cffffd200Quest Ledger:|r Map's own quest list " .. (DB.pureMap and "off (? hidden)" or "on (use the map's ? button)") .. ".")
+    print("|cffffd200Quest Ledger:|r Default Quest Log on the map " .. (DB.pureMap and "off (? hidden)" or "on (use the map's ? button)") .. ".")
     ApplyPureMap()
   elseif msg == "options" or msg == "config" or msg == "settings" then
     ToggleOptions()
