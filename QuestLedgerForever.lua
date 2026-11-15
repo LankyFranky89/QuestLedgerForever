@@ -1828,6 +1828,8 @@ local function ApplyMapAlpha()
   if WorldMapFrame then WorldMapFrame:SetAlpha(DB and DB.mapAlpha or 1) end
 end
 local function ApplyMapPos()
+  -- the drag strip only catches the mouse while "Movable map" is on
+  if mapHandle then mapHandle:EnableMouse(DB and DB.mapMovable == true) end
   if not (WorldMapFrame and DB and DB.mapMovable and DB.mapPos) then return end
   if WorldMapFrame.IsMaximized and WorldMapFrame:IsMaximized() then return end
   if InCombatLockdown and InCombatLockdown() then return end
@@ -1836,6 +1838,16 @@ local function ApplyMapPos()
     WorldMapFrame:ClearAllPoints()
     WorldMapFrame:SetPoint(p[1], UIParent, p[2], p[3], p[4])
   end)
+end
+-- put the map back where the game normally places it
+local function ResetMapPos()
+  if not WorldMapFrame or (InCombatLockdown and InCombatLockdown()) then return end
+  if WorldMapFrame.SetUserPlaced then pcall(WorldMapFrame.SetUserPlaced, WorldMapFrame, false) end
+  if mapHandle then mapHandle:EnableMouse(false) end
+  if WorldMapFrame:IsShown() then
+    if UpdateUIPanelPositions then pcall(UpdateUIPanelPositions, WorldMapFrame) end
+    if WorldMapFrame.SynchronizeDisplayState then pcall(WorldMapFrame.SynchronizeDisplayState, WorldMapFrame) end
+  end
 end
 local function SetupMapMove()
   if mapHandle or not WorldMapFrame then return end
@@ -1846,7 +1858,7 @@ local function SetupMapMove()
   mapHandle:SetPoint("TOPRIGHT", -60, 0)      -- leave the maximize/close buttons alone
   mapHandle:SetHeight(22)
   mapHandle:SetFrameLevel(WorldMapFrame:GetFrameLevel() + 50)
-  mapHandle:EnableMouse(true)
+  mapHandle:EnableMouse(DB and DB.mapMovable == true)
   mapHandle:RegisterForDrag("LeftButton")
   mapHandle:SetScript("OnDragStart", function()
     if not DB.mapMovable or (InCombatLockdown and InCombatLockdown()) then return end
@@ -1855,6 +1867,8 @@ local function SetupMapMove()
   end)
   mapHandle:SetScript("OnDragStop", function()
     WorldMapFrame:StopMovingOrSizing()
+    -- don't let WoW save the spot by itself (it would fight us, and stick when the option is off)
+    if WorldMapFrame.SetUserPlaced then pcall(WorldMapFrame.SetUserPlaced, WorldMapFrame, false) end
     -- offsets are in the map's own scale (it may be scaled to match the Ledger's height)
     local l, t = WorldMapFrame:GetLeft(), WorldMapFrame:GetTop()
     if l and t then DB.mapPos = { "TOPLEFT", "BOTTOMLEFT", l, t } end
@@ -1959,8 +1973,11 @@ local OPTIONS = {
     function(v) if (DB.pureMap == false) ~= v then SlashCmdList.QUESTLEDGERFOREVER("map") end end, nil,
     "On: the map's ? button opens Blizzard's quest list as usual. Off: the ? is hidden and the map stays plain." },
   { "Movable map (drag the title bar)", function() return DB.mapMovable == true end,
-    function(v) DB.mapMovable = v; if not v then DB.mapPos = nil end end, nil,
-    "Drag the map by its title bar; it remembers where you put it. Turning this off puts it back in its normal spot (after closing the map)." },
+    function(v)
+      DB.mapMovable = v
+      if v then ApplyMapPos() else DB.mapPos = nil; ResetMapPos() end
+    end, nil,
+    "Drag the map by its title bar; it remembers where you put it. Turning this off puts it back in its normal spot." },
   { slider = true, label = "Map transparency", min = 30, max = 100, step = 5,
     get = function() return math.floor((DB.mapAlpha or 1) * 100 + 0.5) end,
     set = function(v) DB.mapAlpha = v / 100; ApplyMapAlpha() end,
