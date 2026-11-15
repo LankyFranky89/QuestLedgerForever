@@ -1822,8 +1822,61 @@ local function HookMapPins()
   end
 end
 
+-- Movable map (drag the title bar) and map transparency
+local mapHandle
+local function ApplyMapAlpha()
+  if WorldMapFrame then WorldMapFrame:SetAlpha(DB and DB.mapAlpha or 1) end
+end
+local function ApplyMapPos()
+  if not (WorldMapFrame and DB and DB.mapMovable and DB.mapPos) then return end
+  if WorldMapFrame.IsMaximized and WorldMapFrame:IsMaximized() then return end
+  if InCombatLockdown and InCombatLockdown() then return end
+  local p = DB.mapPos
+  pcall(function()
+    WorldMapFrame:ClearAllPoints()
+    WorldMapFrame:SetPoint(p[1], UIParent, p[2], p[3], p[4])
+  end)
+end
+local function SetupMapMove()
+  if mapHandle or not WorldMapFrame then return end
+  WorldMapFrame:SetMovable(true)
+  WorldMapFrame:SetClampedToScreen(true)
+  mapHandle = CreateFrame("Frame", nil, WorldMapFrame)
+  mapHandle:SetPoint("TOPLEFT", 60, 0)        -- leave the portrait/corner alone
+  mapHandle:SetPoint("TOPRIGHT", -60, 0)      -- leave the maximize/close buttons alone
+  mapHandle:SetHeight(22)
+  mapHandle:SetFrameLevel(WorldMapFrame:GetFrameLevel() + 50)
+  mapHandle:EnableMouse(true)
+  mapHandle:RegisterForDrag("LeftButton")
+  mapHandle:SetScript("OnDragStart", function()
+    if not DB.mapMovable or (InCombatLockdown and InCombatLockdown()) then return end
+    if WorldMapFrame.IsMaximized and WorldMapFrame:IsMaximized() then return end
+    WorldMapFrame:StartMoving()
+  end)
+  mapHandle:SetScript("OnDragStop", function()
+    WorldMapFrame:StopMovingOrSizing()
+    -- offsets are in the map's own scale (it may be scaled to match the Ledger's height)
+    local l, t = WorldMapFrame:GetLeft(), WorldMapFrame:GetTop()
+    if l and t then DB.mapPos = { "TOPLEFT", "BOTTOMLEFT", l, t } end
+    ApplyMapPos()
+    Dock()
+  end)
+  mapHandle:SetScript("OnEnter", function(h)
+    if not DB.mapMovable then return end
+    GameTooltip:SetOwner(h, "ANCHOR_TOP"); GameTooltip:AddLine("Drag to move the map"); GameTooltip:Show()
+  end)
+  mapHandle:SetScript("OnLeave", GameTooltip_Hide)
+  -- the game re-places the map when panels open/close: put it back where you left it
+  if UpdateUIPanelPositions then hooksecurefunc("UpdateUIPanelPositions", function() if WorldMapFrame:IsShown() then ApplyMapPos() end end) end
+end
+
 local function HookPureMap()
   if not WorldMapFrame then return end
+  SetupMapMove()
+  WorldMapFrame:HookScript("OnShow", function()
+    ApplyMapAlpha()
+    C_Timer.After(0, function() ApplyMapPos(); Dock() end)
+  end)
   WorldMapFrame:HookScript("OnShow", function()
     if DB.attach then f:Show() end
     C_Timer.After(0, Dock)
@@ -1905,6 +1958,13 @@ local OPTIONS = {
   { "Default Quest Log on the map (? button)", function() return DB.pureMap == false end,
     function(v) if (DB.pureMap == false) ~= v then SlashCmdList.QUESTLEDGERFOREVER("map") end end, nil,
     "On: the map's ? button opens Blizzard's quest list as usual. Off: the ? is hidden and the map stays plain." },
+  { "Movable map (drag the title bar)", function() return DB.mapMovable == true end,
+    function(v) DB.mapMovable = v; if not v then DB.mapPos = nil end end, nil,
+    "Drag the map by its title bar; it remembers where you put it. Turning this off puts it back in its normal spot (after closing the map)." },
+  { slider = true, label = "Map transparency", min = 30, max = 100, step = 5,
+    get = function() return math.floor((DB.mapAlpha or 1) * 100 + 0.5) end,
+    set = function(v) DB.mapAlpha = v / 100; ApplyMapAlpha() end,
+    tip = "How see-through the map is. 100% = solid." },
   { "Same height as the Quest Ledger", function() return DB.matchHeight ~= false end,
     function(v) DB.matchHeight = v; Dock() end, nil,
     "Scales the map so both windows are equally tall." },
@@ -1943,6 +2003,12 @@ local function SyncAll()
           row:SetPoint("TOPLEFT", list.left, y)
           row:Show(); row.line:Show()
           y = y - 22
+        elseif o.slider then
+          row:SetPoint("TOPLEFT", list.left + 8, y - 22)
+          row:Show(); row.label:Show()
+          row.syncing = true; row:SetValue(o.get()); row.syncing = false
+          row.value:SetText(("%d%%"):format(o.get()))
+          y = y - 50
         else
           row:SetPoint("TOPLEFT", list.left + (o[6] and 20 or 0), y)
           row:Show(); row.label:Show()
@@ -1960,7 +2026,35 @@ local function BuildOptionList(parent, left, top)
   local list = { left = left, top = top }
   for i, o in ipairs(OPTIONS) do
     local row
-    if o.header then
+    if o.slider then
+      row = CreateFrame("Slider", nil, parent)
+      row:SetOrientation("HORIZONTAL")
+      row:SetSize(220, 16)
+      row:SetMinMaxValues(o.min, o.max)
+      row:SetValueStep(o.step)
+      if row.SetObeyStepOnDrag then row:SetObeyStepOnDrag(true) end
+      row.bg = row:CreateTexture(nil, "BACKGROUND")
+      row.bg:SetTexture("Interface\\Buttons\\UI-SliderBar-Background")
+      row.bg:SetPoint("TOPLEFT", 0, -3); row.bg:SetPoint("BOTTOMRIGHT", 0, 3)
+      row:SetThumbTexture("Interface\\Buttons\\UI-SliderBar-Button-Horizontal")
+      row:EnableMouseWheel(true)
+      row:SetScript("OnMouseWheel", function(b, d) b:SetValue(b:GetValue() + d * o.step) end)
+      row.label = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+      row.label:SetPoint("BOTTOMLEFT", row, "TOPLEFT", 0, 4)
+      row.label:SetText(o.label)
+      row.value = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+      row.value:SetPoint("LEFT", row, "RIGHT", 10, 0)
+      row:SetScript("OnValueChanged", function(b, v)
+        v = math.floor(v / o.step + 0.5) * o.step
+        b.value:SetText(("%d%%"):format(v))
+        if DB and not b.syncing then o.set(v) end
+      end)
+      row:SetScript("OnEnter", function(b)
+        GameTooltip:SetOwner(b, "ANCHOR_RIGHT"); GameTooltip:AddLine(o.label); GameTooltip:AddLine(o.tip, 1, 1, 1, true); GameTooltip:Show()
+      end)
+      row:SetScript("OnLeave", GameTooltip_Hide)
+      row.SetChecked, row.SetEnabled = function() end, function() end
+    elseif o.header then
       row = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
       row:SetText(o.header)
       row.line = parent:CreateTexture(nil, "ARTWORK")
