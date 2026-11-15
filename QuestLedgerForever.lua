@@ -1977,8 +1977,15 @@ ev:RegisterEvent("GROUP_ROSTER_UPDATE")
 ev:RegisterEvent("PLAYER_REGEN_ENABLED")
 ev:RegisterEvent("GET_ITEM_INFO_RECEIVED")
 ev:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
+ev:RegisterEvent("SUPER_TRACKING_CHANGED")
 local pending
 ev:SetScript("OnEvent", function(_, event)
+  if event == "SUPER_TRACKING_CHANGED" then
+    -- clicking a quest's ? / ... icon in the objective tracker: point the 3D arrow at it
+    local qid = C_SuperTrack and C_SuperTrack.GetSuperTrackedQuestID and C_SuperTrack.GetSuperTrackedQuestID()
+    if qid and qid > 0 and IndexForQuest(qid) then PointArrow(qid) end
+    return
+  end
   if event == "PLAYER_REGEN_ENABLED" then
     if waitCombat then waitCombat = nil; ApplyPureMap() end
     return
