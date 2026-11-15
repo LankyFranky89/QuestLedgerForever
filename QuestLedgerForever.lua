@@ -1681,11 +1681,10 @@ local function ApplyPureMap()
   local pure = DB.pureMap ~= false
   local t = SideToggle()
   if t then
-    -- keep the "?" visible: it is how you switch back to the old design
-    t:SetAlpha(1); t:EnableMouse(true)
-    if t.OpenButton then t.OpenButton:EnableMouse(true) end
-    if t.CloseButton then t.CloseButton:EnableMouse(true) end
-    HookToggle(t)
+    -- option off: the map's "?" button disappears; on: it works exactly like Blizzard's
+    t:SetAlpha(pure and 0 or 1); t:EnableMouse(not pure)
+    if t.OpenButton then t.OpenButton:EnableMouse(not pure) end
+    if t.CloseButton then t.CloseButton:EnableMouse(not pure) end
   end
   local bf = WorldMapFrame.BorderFrame
   if bf and bf.SetTitle then pcall(bf.SetTitle, bf, pure and "Map" or (MAP_AND_QUEST_LOG or "Map & Quest Log")) end
@@ -1887,9 +1886,9 @@ local OPTIONS = {
     function(v) DB.mapClicks = v; DB.routeOpens = v end, nil,
     "Clicking a quest icon on the map or a quest in the tracker opens it in the Quest Ledger." },
   { header = "Map" },
-  { "Plain map (no quest list)", function() return DB.pureMap ~= false end,
-    function(v) if (DB.pureMap ~= false) ~= v then SlashCmdList.QUESTLEDGERFOREVER("map") end end, nil,
-    "Hides the map's own quest panel. The map's ? button switches it too." },
+  { "Map's own quest list (? button)", function() return DB.pureMap == false end,
+    function(v) if (DB.pureMap == false) ~= v then SlashCmdList.QUESTLEDGERFOREVER("map") end end, nil,
+    "On: the map's ? button opens Blizzard's quest list as usual. Off: the ? is hidden and the map stays plain." },
   { "Same height as the Quest Ledger", function() return DB.matchHeight ~= false end,
     function(v) DB.matchHeight = v; Dock() end, nil,
     "Scales the map so both windows are equally tall." },
@@ -2030,11 +2029,7 @@ SlashCmdList.QUESTLEDGERFOREVER = function(msg)
     Dock()
   elseif msg == "map" then
     DB.pureMap = not DB.pureMap
-    print("|cffffd200Quest Ledger:|r Map " .. (DB.pureMap and "is pure map (no quest list)" or "shows its quest list again") .. ".")
-    if not DB.pureMap and WorldMapFrame and WorldMapFrame:IsShown() and not PanelOpen() then
-      if WorldMapFrame.SetQuestLogPanelShown then pcall(WorldMapFrame.SetQuestLogPanelShown, WorldMapFrame, true)
-      else local t = SideToggle(); if t and t.OpenButton then pcall(t.OpenButton.Click, t.OpenButton) end end
-    end
+    print("|cffffd200Quest Ledger:|r Map's own quest list " .. (DB.pureMap and "off (? hidden)" or "on (use the map's ? button)") .. ".")
     ApplyPureMap()
   elseif msg == "options" or msg == "config" or msg == "settings" then
     ToggleOptions()

@@ -4,7 +4,7 @@
 ## OptionalDeps: QuestMates
 ## Author: Frank
 ## IconTexture: Interface\AddOns\QuestLedgerForever\Icon
-## Version: 2.2.1
+## Version: 2.2.2
 ## SavedVariables: QuestLedgerForeverDB
 
 Chains.lua
