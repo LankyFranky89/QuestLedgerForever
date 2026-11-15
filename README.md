@@ -1,3 +1,5 @@
+<img src="icon.png" width="128" align="right">
+
 # Quest Ledger Forever
 
 The classic, separate quest log for WoW Forever, with modern features.
