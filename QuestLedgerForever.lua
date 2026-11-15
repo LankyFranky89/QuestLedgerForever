@@ -287,6 +287,9 @@ list:SetPoint("TOPLEFT", 10, -50)
 list:SetSize(290, ROW_H * NUM_ROWS)
 
 local scroll = CreateFrame("Slider", nil, f, "UIPanelScrollBarTemplate")
+-- the template's own handler expects a scroll frame parent (and crashes without one):
+-- replace it right away; the real handler is set further down
+scroll:SetScript("OnValueChanged", nil)
 scroll:SetPoint("TOPLEFT", list, "TOPRIGHT", 6, -16)
 scroll:SetPoint("BOTTOMLEFT", list, "BOTTOMRIGHT", 6, 16)
 scroll:SetMinMaxValues(0, 0)
@@ -2148,7 +2151,8 @@ local function RegisterSettings()
     pcall(InterfaceOptions_AddCategory, panel)
   end
 end
-pcall(RegisterSettings)
+-- report problems instead of hiding them (CopyCat / error frame will show them)
+do local ok, err = pcall(RegisterSettings); if not ok then geterrorhandler()("Quest Ledger settings page: " .. tostring(err)) end end
 
 SLASH_QUESTLEDGERFOREVER1 = "/ledger"
 SLASH_QUESTLEDGERFOREVER2 = "/qlf"
