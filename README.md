@@ -13,5 +13,5 @@ The classic, separate quest log for WoW Forever, with modern features.
 
 Commands: `/ledger` (or `/qlf`), `/ledger options`. Settings are also in Options > AddOns.
 
-Install: put the `QuestLogForever` folder in `Interface/AddOns`, or install Frank's Pack in WoW Tinker Box.
+Install: put the `QuestLedgerForever` folder in `Interface/AddOns`, or install Frank's Pack in WoW Tinker Box.
 Quest chain data comes from the QuestieDB WoW Forever quest database.

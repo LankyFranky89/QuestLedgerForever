@@ -1,6 +1,6 @@
--- Quest chains for Quest Log Forever, generated from the QuestieDB WoW Forever quest database.
+-- Quest chains for Quest Ledger Forever, generated from the QuestieDB WoW Forever quest database.
 -- [questID] = { name, level, faction (0 both, 1 Alliance, 2 Horde), {previous}, {next} }
-QuestLogForever_Chains = {
+QuestLedgerForever_Chains = {
 [2]={"Sharptalon's Claw",30,2,{6383},{247}},
 [5]={"Jitters' Growling Gut",20,1,{163},{93}},
 [6]={"Bounty on Garrick Padfoot",5,1,{18},{}},

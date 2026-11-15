@@ -1,5 +1,36 @@
--- Quest Ledger Forever (folder: QuestLogForever): a standalone, extended quest log window for WoW Forever.
+-- Quest Ledger Forever: a standalone, extended quest log window for WoW Forever.
 local ADDON = ...
+
+-- Replacing the old "QuestLogForever" folder: if it's still installed and on, turn it off,
+-- copy its settings over once, and ask for a /reload. This session the old copy keeps running alone,
+-- so the two never fight over the L key, the map or the arrow.
+do
+  local OLD = "QuestLogForever"
+  local GetInfo = (C_AddOns and C_AddOns.GetAddOnInfo) or GetAddOnInfo
+  local Disable = (C_AddOns and C_AddOns.DisableAddOn) or DisableAddOn
+  local ok, _, _, _, loadable, reason = pcall(GetInfo, OLD)
+  if ok and loadable and reason ~= "MISSING" then
+    pcall(Disable, OLD)
+    local w = CreateFrame("Frame")
+    w:RegisterEvent("PLAYER_LOGIN")
+    w:SetScript("OnEvent", function()
+      if not QuestLedgerForeverDB and type(QuestLogForeverDB) == "table" then
+        local copy = {}
+        for k, v in pairs(QuestLogForeverDB) do copy[k] = v end
+        QuestLedgerForeverDB = copy
+      end
+      print("|cffffd200Quest Ledger Forever:|r replaced the old Quest Log Forever (now turned off). Type |cffffd200/reload|r to finish. You can delete the old QuestLogForever folder.")
+      StaticPopupDialogs["QUESTLEDGER_RELOAD"] = {
+        text = "Quest Ledger Forever replaced the old Quest Log Forever.\nReload now to finish?",
+        button1 = RELOADUI or "Reload UI", button2 = LATER or "Later",
+        OnAccept = function() ReloadUI() end,
+        timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+      }
+      StaticPopup_Show("QUESTLEDGER_RELOAD")
+    end)
+    return
+  end
+end
 local DB
 local MODERN = C_QuestLog and C_QuestLog.GetInfo and C_QuestLog.GetNumQuestLogEntries
 -- item API differs per client build: use whichever exists
@@ -14,17 +45,17 @@ local mode = "mine" -- "mine" or "party"
 local function Mates() return QuestMatesAPI end
 
 -- Rally Point's 3D arrow (optional)
-function QuestLogForever_ArrowOff() return QuestLogForeverDB and QuestLogForeverDB.arrow == false end
+function QuestLedgerForever_ArrowOff() return QuestLedgerForeverDB and QuestLedgerForeverDB.arrow == false end
 local function PointArrow(qid)
-  if not qid or QuestLogForever_ArrowOff() then return end
+  if not qid or QuestLedgerForever_ArrowOff() then return end
   if RallyPoint_FollowQuest then pcall(RallyPoint_FollowQuest, qid)   -- Rally Point has hand-in data too
   elseif QLF_OwnArrow then QLF_OwnArrow(qid) end                      -- built-in arrow
 end
 -- distance units, shared with Rally Point when it's installed
-local function Units() return ((RallyPointDB and RallyPointDB.units) or (QuestLogForeverDB and QuestLogForeverDB.units)) == "m" and "m" or "yd" end
+local function Units() return ((RallyPointDB and RallyPointDB.units) or (QuestLedgerForeverDB and QuestLedgerForeverDB.units)) == "m" and "m" or "yd" end
 local function SetUnits(u)
   if RallyPointDB then RallyPointDB.units = u end
-  if QuestLogForeverDB then QuestLogForeverDB.units = u end
+  if QuestLedgerForeverDB then QuestLedgerForeverDB.units = u end
 end
 
 ---------------------------------------------------------------- API helpers
@@ -125,7 +156,7 @@ end
 
 local function Friends(qid)
   local api = Mates()
-  if not (api and qid) or (QuestLogForeverDB and QuestLogForeverDB.partyInfo == false) then return {} end
+  if not (api and qid) or (QuestLedgerForeverDB and QuestLedgerForeverDB.partyInfo == false) then return {} end
   local ok, res = pcall(api.FriendsOnQuest, qid)
   return ok and res or {}
 end
@@ -133,10 +164,10 @@ end
 ---------------------------------------------------------------- main frame
 -- Same window art as the Map (ButtonFrameTemplate = gold border, red close button, dark inset)
 local NATIVE = true
-local okTpl, f = pcall(CreateFrame, "Frame", "QuestLogForeverFrame", UIParent, "ButtonFrameTemplate")
+local okTpl, f = pcall(CreateFrame, "Frame", "QuestLedgerForeverFrame", UIParent, "ButtonFrameTemplate")
 if not okTpl or not f then
   NATIVE = false
-  f = CreateFrame("Frame", "QuestLogForeverFrame2", UIParent, "BasicFrameTemplateWithInset")
+  f = CreateFrame("Frame", "QuestLedgerForeverFrame2", UIParent, "BasicFrameTemplateWithInset")
 end
 if NATIVE then
   if ButtonFrameTemplate_HidePortrait then pcall(ButtonFrameTemplate_HidePortrait, f)
@@ -360,7 +391,7 @@ list:SetScript("OnMouseWheel", function(_, d) scroll:SetValue(scroll:GetValue() 
 scroll:SetScript("OnValueChanged", function() Refresh() end)
 
 -- right: details
-local detail = CreateFrame("ScrollFrame", "QuestLogForeverDetail", f, "UIPanelScrollFrameTemplate")
+local detail = CreateFrame("ScrollFrame", "QuestLedgerForeverDetail", f, "UIPanelScrollFrameTemplate")
 detail:SetPoint("TOPLEFT", 340, -32)
 detail:SetPoint("BOTTOMRIGHT", -30, NATIVE and 36 or 44)
 local dc = CreateFrame("Frame", nil, detail)
@@ -688,7 +719,7 @@ local function QuestDone(id)
   return false
 end
 local function BuildChain(qid)
-  local data = QuestLogForever_Chains
+  local data = QuestLedgerForever_Chains
   if not (data and data[qid]) then return end
   local me = (UnitFactionGroup("player") == "Horde") and 2 or 1
   local function ok(id) local d = data[id]; return d and (d[3] == 0 or d[3] == me) end
@@ -1252,7 +1283,7 @@ local function SetArrowAngle(tex, angle)
 end
 
 local arrowTarget -- { qid, title, cont, wx, wy }
-local af = CreateFrame("Button", "QuestLogForeverArrow", UIParent)
+local af = CreateFrame("Button", "QuestLedgerForeverArrow", UIParent)
 af:SetSize(180, 80)
 af:SetPoint("TOP", UIParent, "TOP", 0, -140)
 af:SetMovable(true); af:EnableMouse(true); af:SetClampedToScreen(true)
@@ -1273,7 +1304,7 @@ af:SetScript("OnLeave", GameTooltip_Hide)
 af.arrow = af:CreateTexture(nil, "ARTWORK")
 af.arrow:SetSize(56, 56)
 af.arrow:SetPoint("TOP", 0, 8)
-af.arrow:SetTexture("Interface\\AddOns\\QuestLogForever\\Arrow")
+af.arrow:SetTexture("Interface\\AddOns\\QuestLedgerForever\\Arrow")
 af.title = af:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
 af.title:SetPoint("TOP", af.arrow, "BOTTOM", 0, 0)
 af.title:SetWidth(180); af.title:SetWordWrap(false)
@@ -1323,7 +1354,7 @@ end
 function QLF_HideArrow() arrowTarget = nil; af:Hide() end
 
 ---------------------------------------------------------------- right-click menu
-local qm = CreateFrame("Frame", "QuestLogForeverMenu", UIParent, BackdropTemplateMixin and "BackdropTemplate" or nil)
+local qm = CreateFrame("Frame", "QuestLedgerForeverMenu", UIParent, BackdropTemplateMixin and "BackdropTemplate" or nil)
 qm:SetFrameStrata("FULLSCREEN_DIALOG")
 qm:SetClampedToScreen(true)
 qm:EnableMouse(true)
@@ -1430,7 +1461,7 @@ local function GreyQuests()
   return out
 end
 
-cp = CreateFrame("Frame", "QuestLogForeverCleanup", f, BackdropTemplateMixin and "BackdropTemplate" or nil)
+cp = CreateFrame("Frame", "QuestLedgerForeverCleanup", f, BackdropTemplateMixin and "BackdropTemplate" or nil)
 cp:SetPoint("TOPLEFT", detail, -4, 4)
 cp:SetPoint("BOTTOMRIGHT", detail, 26, -4)
 cp:SetFrameLevel(f:GetFrameLevel() + 30)
@@ -1557,12 +1588,12 @@ f:SetScript("OnHide", function() PlaySound(SOUNDKIT and SOUNDKIT.IG_QUEST_LOG_CL
 local function Toggle()
   if f:IsShown() then f:Hide() else f:Show() end
 end
-QuestLogForever_Toggle = Toggle
-BINDING_HEADER_QUESTLOGFOREVER = "Quest Ledger Forever"
-BINDING_NAME_QUESTLOGFOREVER_TOGGLE = "Toggle Quest Ledger"
+QuestLedgerForever_Toggle = Toggle
+BINDING_HEADER_QUESTLEDGERFOREVER = "Quest Ledger Forever"
+BINDING_NAME_QUESTLEDGERFOREVER_TOGGLE = "Toggle Quest Ledger"
 
 -- Used by QuestMates: open one of my quests in this window. Returns true if handled.
-function QuestLogForever_OpenQuest(qid)
+function QuestLedgerForever_OpenQuest(qid)
   if not qid or not IndexForQuest(qid) then return false end
   local h = HeaderForQuest(qid)
   if h then collapsed[h] = nil end
@@ -1590,7 +1621,7 @@ end
 
 -- Called by QuestMates when party data changes
 local matesPending
-function QuestLogForever_OnMatesUpdate()
+function QuestLedgerForever_OnMatesUpdate()
   if not f:IsShown() or matesPending then return end
   matesPending = true
   C_Timer.After(0.1, function() matesPending = nil; Refresh() end)
@@ -1688,7 +1719,7 @@ local function RouteQuestOpens()
           if name == "QuestLog_OpenToQuestIndex" then
             local _, _, _, _, _, id = EntryInfo(arg); qid = id
           end
-          if qid and QuestLogForever_OpenQuest(qid) then return end
+          if qid and QuestLedgerForever_OpenQuest(qid) then return end
         end
         return origOpen[name](arg, ...)
       end
@@ -1696,7 +1727,7 @@ local function RouteQuestOpens()
   end
 end
 
-function QuestLogForever_IsPureMap() return DB ~= nil end -- QuestMates' party list lives in Quest Log Forever
+function QuestLedgerForever_IsPureMap() return DB ~= nil end -- QuestMates' party list lives in Quest Ledger Forever
 
 -- Clicking a quest icon on the map opens that quest in this log.
 -- only real icon pins: big area pins (quest blobs) sit over the whole zone and must keep normal map clicks
@@ -1717,7 +1748,7 @@ local function HookPin(p)
     if btn ~= "LeftButton" or (DB and DB.mapClicks == false) then return end
     local qid = PinQuestID(pin)
     if qid and IndexForQuest(qid) then
-      QuestLogForever_OpenQuest(qid)
+      QuestLedgerForever_OpenQuest(qid)
       -- the pin's own click (on release) can reset the selection; re-apply it after, so the icon lights up
       C_Timer.After(0.05, function()
         if selectedID ~= qid then return end
@@ -1787,8 +1818,8 @@ ev:SetScript("OnEvent", function(_, event)
     return
   end
   if event == "PLAYER_LOGIN" then
-    QuestLogForeverDB = QuestLogForeverDB or {}
-    DB = QuestLogForeverDB
+    QuestLedgerForeverDB = QuestLedgerForeverDB or {}
+    DB = QuestLedgerForeverDB
     if DB.hookKey == nil then DB.hookKey = true end
     PlaceFree()
     QLF_OrigToggleQuestLog = QLF_OrigToggleQuestLog or ToggleQuestLog
@@ -1811,10 +1842,10 @@ end)
 
 ---------------------------------------------------------------- options window
 -- same window art as the Quest Ledger (falls back to a dark dialog)
-local okOp, op = pcall(CreateFrame, "Frame", "QuestLogForeverOptions", UIParent, "ButtonFrameTemplate")
+local okOp, op = pcall(CreateFrame, "Frame", "QuestLedgerForeverOptions", UIParent, "ButtonFrameTemplate")
 local OP_NATIVE = okOp and op
 if not OP_NATIVE then
-  op = CreateFrame("Frame", "QuestLogForeverOptions2", UIParent, BackdropTemplateMixin and "BackdropTemplate" or nil)
+  op = CreateFrame("Frame", "QuestLedgerForeverOptions2", UIParent, BackdropTemplateMixin and "BackdropTemplate" or nil)
   if op.SetBackdrop then
     op:SetBackdrop({ bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
       edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border", tile = true, tileSize = 32, edgeSize = 24,
@@ -1857,7 +1888,7 @@ local OPTIONS = {
     "Clicking a quest icon on the map or a quest in the tracker opens it in the Quest Ledger." },
   { header = "Map" },
   { "Plain map (no quest list)", function() return DB.pureMap ~= false end,
-    function(v) if (DB.pureMap ~= false) ~= v then SlashCmdList.QUESTLOGFOREVER("map") end end, nil,
+    function(v) if (DB.pureMap ~= false) ~= v then SlashCmdList.QUESTLEDGERFOREVER("map") end end, nil,
     "Hides the map's own quest panel. The map's ? button switches it too." },
   { "Same height as the Quest Ledger", function() return DB.matchHeight ~= false end,
     function(v) DB.matchHeight = v; Dock() end, nil,
@@ -1982,9 +2013,9 @@ local function RegisterSettings()
 end
 pcall(RegisterSettings)
 
-SLASH_QUESTLOGFOREVER1 = "/ledger"
-SLASH_QUESTLOGFOREVER2 = "/qlf"
-SlashCmdList.QUESTLOGFOREVER = function(msg)
+SLASH_QUESTLEDGERFOREVER1 = "/ledger"
+SLASH_QUESTLEDGERFOREVER2 = "/qlf"
+SlashCmdList.QUESTLEDGERFOREVER = function(msg)
   msg = (msg or ""):lower()
   if msg == "key" then
     DB.hookKey = not DB.hookKey
