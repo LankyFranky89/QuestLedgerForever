@@ -437,6 +437,26 @@ local dMoney = rewardBox:CreateFontString(nil, "OVERLAY", "QuestFont")
 dMoney:SetJustifyH("LEFT")
 dMoney:SetWidth(320)
 local dChooseL = FS("QuestFont")
+-- experience: big purple number + a level bar (now / this quest adds)
+local dXP = dc:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+dXP:SetTextColor(0.35, 0.16, 0.54)
+dXP:SetJustifyH("LEFT")
+dXP:Hide()
+local xpBar = CreateFrame("Frame", nil, dc)
+xpBar:SetSize(300, 10)
+xpBar.bg = xpBar:CreateTexture(nil, "BACKGROUND"); xpBar.bg:SetAllPoints(); xpBar.bg:SetColorTexture(0.23, 0.16, 0.06, 1)
+xpBar.now = xpBar:CreateTexture(nil, "ARTWORK"); xpBar.now:SetPoint("TOPLEFT"); xpBar.now:SetPoint("BOTTOMLEFT")
+xpBar.now:SetColorTexture(0.48, 0.25, 0.69, 1)
+xpBar.gain = xpBar:CreateTexture(nil, "ARTWORK"); xpBar.gain:SetPoint("TOPLEFT", xpBar.now, "TOPRIGHT"); xpBar.gain:SetPoint("BOTTOMLEFT", xpBar.now, "BOTTOMRIGHT")
+xpBar.gain:SetColorTexture(0.78, 0.61, 0.94, 1)
+xpBar.edge = xpBar:CreateTexture(nil, "OVERLAY")
+xpBar.edge:SetPoint("TOPLEFT", -1, 1); xpBar.edge:SetPoint("BOTTOMRIGHT", 1, -1)
+xpBar.edge:SetColorTexture(0.1, 0.07, 0.03, 0.9); xpBar.edge:SetDrawLayer("BACKGROUND", -1)
+xpBar:Hide()
+local dXPNote = FS("GameFontNormalSmall")
+dXPNote:SetTextColor(0.35, 0.27, 0.19)
+dXPNote:Hide()
+local function HideXP() dXP:Hide(); xpBar:Hide(); dXPNote:Hide() end
 local dGetL = FS("QuestFont")
 dMoney:SetTextColor(INK[1], INK[2], INK[3])
 dMoney:SetShadowOffset(0, 0)
@@ -802,6 +822,7 @@ ShowDetails = function()
     dTitle:SetText("No quest selected")
     chainBtn:Hide()
     for _, s in ipairs({ dObj, dObjList, dPartyH, dParty, dDescH, dDesc, dRewH, dMoney }) do s:Hide() end
+    HideXP()
     rewardBox:Hide()
     return
   end
@@ -925,8 +946,7 @@ ShowDetails = function()
     if bestBtn and DB.rewardMarks ~= false then bestBtn.bag:Show() end
     local m = {}
     if money > 0 then m[#m + 1] = Coins(money) end
-    if xp > 0 then m[#m + 1] = (EXPERIENCE_COLON or "Experience:") .. " " .. xp end
-    if #m > 0 and nChoice + nRew == 0 then
+    if (#m > 0 or xp > 0) and nChoice + nRew == 0 then
       dGetL:SetText(REWARD_ITEMS_ONLY or "You will receive:")
       dGetL:ClearAllPoints(); dGetL:SetPoint("TOPLEFT", last, "BOTTOMLEFT", 0, -6); dGetL:Show()
       last = dGetL
@@ -935,6 +955,32 @@ ShowDetails = function()
     dMoney:ClearAllPoints()
     dMoney:SetPoint("TOPLEFT", last, "BOTTOMLEFT", 0, -8)
     dMoney:SetText(table.concat(m, "     "))
+    if #m > 0 then last = dMoney end
+    -- experience with a level bar
+    HideXP()
+    local maxXP = UnitXPMax and UnitXPMax("player") or 0
+    if xp > 0 then
+      local function fmt(n) return BreakUpLargeNumbers and BreakUpLargeNumbers(n) or tostring(n) end
+      dXP:SetText("+" .. fmt(xp) .. " XP")
+      dXP:ClearAllPoints(); dXP:SetPoint("TOPLEFT", last, "BOTTOMLEFT", 0, -8); dXP:Show()
+      last = dXP
+      if maxXP and maxXP > 0 and UnitLevel("player") < (GetMaxPlayerLevel and GetMaxPlayerLevel() or 60) then
+        local cur, lvl = UnitXP("player") or 0, UnitLevel("player")
+        local w = xpBar:GetWidth()
+        local nowW = math.max(0.001, w * cur / maxXP)
+        local gainW = math.max(0.001, math.min(w - nowW, w * xp / maxXP))
+        xpBar.now:SetWidth(nowW); xpBar.gain:SetWidth(gainW)
+        xpBar:ClearAllPoints(); xpBar:SetPoint("TOPLEFT", last, "BOTTOMLEFT", 1, -4); xpBar:Show()
+        local pct = math.floor(xp / maxXP * 100 + 0.5)
+        if cur + xp >= maxXP then
+          dXPNote:SetText(("+%d%% of level %d  -  |cffa06a00enough to reach level %d!|r"):format(pct, lvl, lvl + 1))
+        else
+          dXPNote:SetText(("+%d%% of level %d"):format(pct, lvl))
+        end
+        dXPNote:ClearAllPoints(); dXPNote:SetPoint("TOPLEFT", xpBar, "BOTTOMLEFT", -1, -3); dXPNote:Show()
+        last = dXPNote
+      end
+    end
     rewardBox:ClearAllPoints()
     rewardBox:SetPoint("TOPLEFT", dRewH, "BOTTOMLEFT", 0, 0)
     rewardBox:SetSize(1, 1)
@@ -943,6 +989,7 @@ ShowDetails = function()
     dRewH:Hide()
     dMoney:Hide()
     dChooseL:Hide(); dGetL:Hide()
+    HideXP()
     rewardBox:Hide()
   end
   -- size the page to its content so it can't scroll past the end
@@ -951,7 +998,7 @@ ShowDetails = function()
     if not top then return end
     local low = top
     local function consider(r) if r and r:IsShown() then local bt = r:GetBottom(); if bt and bt < low then low = bt end end end
-    for _, r in ipairs({ dTitle, dObj, dObjList, dPartyH, dParty, dDescH, dDesc, dRewH, dChooseL, dGetL, dMoney }) do consider(r) end
+    for _, r in ipairs({ dTitle, dObj, dObjList, dPartyH, dParty, dDescH, dDesc, dRewH, dChooseL, dGetL, dMoney, dXP, xpBar, dXPNote }) do consider(r) end
     for _, rb in ipairs(rewardBtns) do consider(rb) end
     local h = math.max(detail:GetHeight() or 0, (top - low) + 16)
     dc:SetHeight(h)
