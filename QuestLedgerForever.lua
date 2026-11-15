@@ -1840,37 +1840,6 @@ end)
 
 
 ---------------------------------------------------------------- options window
--- same window art as the Quest Ledger (falls back to a dark dialog)
-local okOp, op = pcall(CreateFrame, "Frame", "QuestLedgerForeverOptions", UIParent, "ButtonFrameTemplate")
-local OP_NATIVE = okOp and op
-if not OP_NATIVE then
-  op = CreateFrame("Frame", "QuestLedgerForeverOptions2", UIParent, BackdropTemplateMixin and "BackdropTemplate" or nil)
-  if op.SetBackdrop then
-    op:SetBackdrop({ bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
-      edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border", tile = true, tileSize = 32, edgeSize = 24,
-      insets = { left = 6, right = 6, top = 6, bottom = 6 } })
-  end
-  local c = CreateFrame("Button", nil, op, "UIPanelCloseButton"); c:SetPoint("TOPRIGHT", -4, -4)
-  op.title = op:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge"); op.title:SetPoint("TOP", 0, -16)
-  op.title:SetText("Quest Ledger Forever - Options")
-else
-  if ButtonFrameTemplate_HidePortrait then pcall(ButtonFrameTemplate_HidePortrait, op)
-  elseif op.PortraitContainer then op.PortraitContainer:Hide() end
-  if ButtonFrameTemplate_HideButtonBar then pcall(ButtonFrameTemplate_HideButtonBar, op) end
-  if op.SetTitle then op:SetTitle("Quest Ledger Forever - Options")
-  elseif op.TitleText then op.TitleText:SetText("Quest Ledger Forever - Options") end
-  if op.Inset then op.Inset:ClearAllPoints(); op.Inset:SetPoint("TOPLEFT", 4, -24); op.Inset:SetPoint("BOTTOMRIGHT", -6, 6) end
-end
-op:SetSize(380, 410)
-op:SetPoint("CENTER")
-op:SetFrameStrata("DIALOG")
-op:SetToplevel(true)
-op:EnableMouse(true); op:SetMovable(true); op:RegisterForDrag("LeftButton")
-op:SetScript("OnDragStart", op.StartMoving); op:SetScript("OnDragStop", op.StopMovingOrSizing)
-op:SetClampedToScreen(true)
-op:Hide()
-tinsert(UISpecialFrames, op:GetName())
-
 -- { header } or { label, get, set, available?, tooltip, indent?, enabledWhen? }
 local OPTIONS = {
   { header = "Quest Ledger" },
@@ -1978,8 +1947,17 @@ local function BuildOptionList(parent, left, top)
   parent:HookScript("OnShow", SyncAll)
   return list
 end
-op.checks = BuildOptionList(op, 18, OP_NATIVE and -38 or -44)
-local function ToggleOptions() if op:IsShown() then op:Hide() else op:Show() end end
+local settingsPanel, settingsCategory
+-- the gear button and /ledger options open the game's own Options > AddOns page
+local function ToggleOptions()
+  if settingsCategory and Settings and Settings.OpenToCategory then
+    local id = settingsCategory.GetID and settingsCategory:GetID() or settingsCategory.ID
+    pcall(Settings.OpenToCategory, id)
+  elseif settingsPanel and InterfaceOptionsFrame_OpenToCategory then
+    InterfaceOptionsFrame_OpenToCategory(settingsPanel)
+    InterfaceOptionsFrame_OpenToCategory(settingsPanel) -- called twice: old clients need it to scroll to the page
+  end
+end
 
 -- gear button next to the quest counter
 f.gear = CreateFrame("Button", nil, f)
@@ -2001,10 +1979,12 @@ local function RegisterSettings()
   t:SetPoint("TOPLEFT", 16, -16); t:SetText("Quest Ledger Forever")
   local sub = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   sub:SetPoint("TOPLEFT", t, "BOTTOMLEFT", 0, -6)
-  sub:SetText("A separate, extended quest log. Same settings as the gear button in the quest log and /qlf options.")
+  sub:SetText("The classic separate quest log, with modern features. Open this page with the gear in the Quest Ledger or /ledger options.")
   BuildOptionList(panel, 16, -64)
+  settingsPanel = panel
   if Settings and Settings.RegisterCanvasLayoutCategory and Settings.RegisterAddOnCategory then
     local cat = Settings.RegisterCanvasLayoutCategory(panel, panel.name)
+    settingsCategory = cat
     pcall(Settings.RegisterAddOnCategory, cat)
   elseif InterfaceOptions_AddCategory then
     pcall(InterfaceOptions_AddCategory, panel)
