@@ -1,11 +1,13 @@
 ## Interface: 16001
 ## Title: Quest Ledger Forever
-## Notes: The classic separate quest log, with modern features: quest chains, 3D arrow, reward upgrades, party quests (QuestMates) and more. /ledger
+## Notes: The classic separate quest log, with modern features: quest chains, 3D arrow, reward upgrades, quest levels at quest givers, quest-starter item popups, party quests (QuestMates) and more. /ledger
 ## OptionalDeps: QuestMates
 ## Author: Frank
 ## IconTexture: Interface\AddOns\QuestLedgerForever\Icon
-## Version: 2.5.1
+## Version: 2.6.0
 ## SavedVariables: QuestLedgerForeverDB
 
 Chains.lua
 QuestLedgerForever.lua
+LevelTag.lua
+PopQuest.lua

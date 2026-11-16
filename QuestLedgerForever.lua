@@ -2004,6 +2004,18 @@ ev:SetScript("OnEvent", function(_, event)
     if DB.pureMap and SetCVar then pcall(SetCVar, "questLogOpen", 0) end
     RouteQuestOpens()
     HookPureMap()
+    -- PopQuest / LevelTag are now part of Quest Ledger: their old addons were turned off, a reload finishes it
+    if QuestLedgerForever_Replaced and #QuestLedgerForever_Replaced > 0 then
+      local names = table.concat(QuestLedgerForever_Replaced, " and ")
+      print("|cffffd200Quest Ledger:|r " .. names .. " are now built into Quest Ledger Forever. The old addon(s) are turned off; type |cffffd200/reload|r to finish. You can delete their old folders.")
+      StaticPopupDialogs["QUESTLEDGER_MERGE_RELOAD"] = {
+        text = names .. " are now built into Quest Ledger Forever.\nReload now to finish?",
+        button1 = RELOADUI or "Reload UI", button2 = LATER or "Later",
+        OnAccept = function() ReloadUI() end,
+        timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+      }
+      StaticPopup_Show("QUESTLEDGER_MERGE_RELOAD")
+    end
     return
   end
   if f:IsShown() and not pending then
@@ -2052,6 +2064,12 @@ local OPTIONS = {
   { "Dungeon and raid icons", function() return DB.instIcons ~= false end,
     function(v) DB.instIcons = v; Refresh() end, nil,
     "A portal icon in front of quests for a dungeon (purple) or raid (red)." },
+  { "Quest levels at quest givers (LevelTag)", function() return DB.levelTags ~= false end,
+    function(v) DB.levelTags = v end, nil,
+    "Shows [level] after quest names when you talk to a quest giver and on the Accept window." },
+  { "Popup for items that start a quest (PopQuest)", function() return DB.popQuest ~= false end,
+    function(v) DB.popQuest = v end, nil,
+    "When you loot an item that starts a quest, a popup with a View Quest button appears." },
   { "Reward markers (best price, upgrades)", function() return DB.rewardMarks ~= false end,
     function(v) DB.rewardMarks = v; Refresh(); if QLF_MarkQuestFrame then QLF_MarkQuestFrame() end end, nil,
     "Bag = sells for the most. Green arrow = an upgrade for your spec." },
