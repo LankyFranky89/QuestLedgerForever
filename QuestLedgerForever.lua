@@ -44,12 +44,28 @@ local mode = "mine" -- "mine" or "party"
 
 local function Mates() return QuestMatesAPI end
 
--- Rally Point's 3D arrow (optional)
+-- Waypoints: the game's own in-world marker (showInGameNavigation) and/or the 3D arrow
 function QuestLedgerForever_ArrowOff() return QuestLedgerForeverDB and QuestLedgerForeverDB.arrow == false end
+local function MarkerOn() return not (QuestLedgerForeverDB and QuestLedgerForeverDB.gameMarker == false) end
+local function SetGameMarker(on)
+  if not SetCVar then return end
+  local want = on and "1" or "0"
+  local cur = GetCVar and GetCVar("showInGameNavigation")
+  if cur ~= want then pcall(SetCVar, "showInGameNavigation", want) end
+end
 local function PointArrow(qid)
-  if not qid or QuestLedgerForever_ArrowOff() then return end
-  if RallyPoint_FollowQuest then pcall(RallyPoint_FollowQuest, qid)   -- Rally Point has hand-in data too
-  elseif QLF_OwnArrow then QLF_OwnArrow(qid) end                      -- built-in arrow
+  if not qid then return end
+  -- game marker: follows the "super tracked" quest
+  if MarkerOn() and C_SuperTrack and C_SuperTrack.SetSuperTrackedQuestID then
+    SetGameMarker(true)
+    local cur = C_SuperTrack.GetSuperTrackedQuestID and C_SuperTrack.GetSuperTrackedQuestID()
+    if cur ~= qid then pcall(C_SuperTrack.SetSuperTrackedQuestID, qid) end
+  end
+  -- 3D arrow
+  if not QuestLedgerForever_ArrowOff() then
+    if RallyPoint_FollowQuest then pcall(RallyPoint_FollowQuest, qid)   -- Rally Point has hand-in data too
+    elseif QLF_OwnArrow then QLF_OwnArrow(qid) end                      -- built-in arrow
+  end
 end
 -- distance units, shared with Rally Point when it's installed
 local function Units() return ((RallyPointDB and RallyPointDB.units) or (QuestLedgerForeverDB and QuestLedgerForeverDB.units)) == "m" and "m" or "yd" end
@@ -2000,6 +2016,13 @@ ev:SetScript("OnEvent", function(_, event)
       -- Make the normal quest log key (L) open this window instead of the combined map.
       ToggleQuestLog = Toggle
     end
+    -- 2.7: the game's own waypoint marker becomes the default; the 3D arrow is optional
+    if not DB.markerDefaults then
+      DB.markerDefaults = true
+      if DB.gameMarker == nil then DB.gameMarker = true end
+      DB.arrow = false
+    end
+    if DB.gameMarker ~= false then SetGameMarker(true) end
     if DB.pureMap == nil then DB.pureMap = true end
     if DB.pureMap and SetCVar then pcall(SetCVar, "questLogOpen", 0) end
     RouteQuestOpens()
@@ -2076,6 +2099,9 @@ local OPTIONS = {
   { "Party info from QuestMates", function() return DB.partyInfo ~= false end,
     function(v) DB.partyInfo = v; Refresh() end, function() return QuestMatesAPI ~= nil end,
     "Party dots in the list and friends' progress on the quest page." },
+  { "Game's waypoint marker for the selected quest", function() return DB.gameMarker ~= false end,
+    function(v) DB.gameMarker = v; SetGameMarker(v); if v then PointArrow(selectedID) end end, nil,
+    "The game's own marker in the world, with the distance, over where the selected quest goes." },
   { "3D arrow to the selected quest", function() return DB.arrow ~= false end,
     function(v) DB.arrow = v; f.arrow:SetChecked(v); if v then PointArrow(selectedID) elseif QLF_HideArrow then QLF_HideArrow() end end, nil,
     "Points to the quest's objective, or where to hand it in. Right-click the arrow to hide it." },
