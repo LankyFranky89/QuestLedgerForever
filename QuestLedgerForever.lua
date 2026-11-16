@@ -2143,7 +2143,7 @@ local OPTIONS = {
     set = function(r, g, b) DB.markerColor = { r, g, b }; QLF_ColorMarker() end,
     reset = function() DB.markerColor = nil; QLF_ColorMarker() end,
     enabledWhen = function() return DB.gameMarker ~= false end,
-    tip = "Pick the marker's color. It turns gold when the quest is ready to hand in. Right-click to reset." },
+    tip = "Pick the marker's color. It turns gold when the quest is ready to hand in. Default puts back the game's normal look." },
   { "3D arrow to the selected quest", function() return DB.arrow ~= false end,
     function(v) DB.arrow = v; f.arrow:SetChecked(v); if v then PointArrow(selectedID) elseif QLF_HideArrow then QLF_HideArrow() end end, nil,
     "Points to the quest's objective, or where to hand it in. Right-click the arrow to hide it." },
@@ -2162,6 +2162,7 @@ local function SyncAll()
       local avail = o.header or not o[4] or o[4]()
       if not avail then
         row:Hide(); if row.label then row.label:Hide() end
+        if row.def then row.def:Hide() end
       else
         row:ClearAllPoints()
         if o.header then
@@ -2175,6 +2176,7 @@ local function SyncAll()
           row.swatch:SetColorTexture(o.get())
           local on = not o.enabledWhen or o.enabledWhen()
           row:SetEnabled(on); row:SetAlpha(on and 1 or 0.4)
+          if row.def then row.def:Show(); row.def:SetEnabled(on and DB.markerColor ~= nil) end
           row.label:SetFontObject(on and "GameFontHighlight" or "GameFontDisable")
           y = y - 26
         elseif o.slider then
@@ -2210,6 +2212,12 @@ local function BuildOptionList(parent, left, top)
       row.label = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
       row.label:SetPoint("LEFT", row, "RIGHT", 8, 0)
       row.label:SetText(o.label)
+      -- "Default" button: back to the game's normal marker look
+      row.def = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+      row.def:SetSize(70, 20)
+      row.def:SetPoint("LEFT", row.label, "RIGHT", 10, 0)
+      row.def:SetText(DEFAULT or "Default")
+      row.def:SetScript("OnClick", function() if DB then o.reset(); SyncAll() end end)
       row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
       row:SetScript("OnClick", function(b, btn)
         if not DB then return end
