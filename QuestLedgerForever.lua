@@ -53,18 +53,39 @@ local function SetGameMarker(on)
   local cur = GetCVar and GetCVar("showInGameNavigation")
   if cur ~= want then pcall(SetCVar, "showInGameNavigation", want) end
 end
--- Color the game's marker (diamond + distance text): your color, gold when the quest is ready to hand in
+-- Color the game's marker (diamond + distance text) by distance: red far -> yellow -> green close.
+-- Gold when the quest is ready to hand in.
+local FAR_YARDS = 500 -- red at this distance or more
+local function MarkerDistance(stf)
+  if C_Navigation and C_Navigation.GetDistance then
+    local ok, d = pcall(C_Navigation.GetDistance)
+    if ok and type(d) == "number" and d > 0 then return d end
+  end
+  -- fallback: read the number from the marker's own distance text ("188 yds")
+  local t = stf.DistanceText and stf.DistanceText.GetText and stf.DistanceText:GetText()
+  local n = t and tonumber((t:gsub(",", "")):match("([%d%.]+)"))
+  if n and t:lower():find("m") and not t:lower():find("yd") then n = n / 0.9144 end
+  return n
+end
 local markerHooked
 function QLF_ColorMarker()
   local stf = SuperTrackedFrame
   if not stf then return end
   local db = QuestLedgerForeverDB or {}
   local r, g, b = 1, 1, 1
-  if db.markerColor then r, g, b = db.markerColor[1], db.markerColor[2], db.markerColor[3] end
+  local custom = false
   local qid = C_SuperTrack and C_SuperTrack.GetSuperTrackedQuestID and C_SuperTrack.GetSuperTrackedQuestID()
   local done = qid and qid > 0 and C_QuestLog and C_QuestLog.IsComplete and C_QuestLog.IsComplete(qid)
-  if done then r, g, b = 1, 0.82, 0 end
-  local custom = db.markerColor or done
+  if done then
+    r, g, b = 1, 0.82, 0; custom = true
+  elseif db.markerDistColor ~= false then
+    local d = MarkerDistance(stf)
+    if d then
+      local t = math.min(1, d / FAR_YARDS) -- 0 = here, 1 = far
+      if t > 0.5 then r, g = 1, 2 * (1 - t) else r, g = 2 * t, 1 end
+      b = 0.15; custom = true
+    end
+  end
   -- the diamond (and arrow, when the target is off-screen)
   for _, key in ipairs({ "Icon", "Arrow" }) do
     local t = stf[key]
@@ -83,6 +104,12 @@ function QLF_ColorMarker()
       if type(stf[fn]) == "function" then hooksecurefunc(stf, fn, function() QLF_ColorMarker() end) end
     end
     stf:HookScript("OnShow", function() QLF_ColorMarker() end)
+    -- keep the distance color moving while you walk (4 times a second)
+    local acc = 0
+    stf:HookScript("OnUpdate", function(_, dt)
+      acc = acc + (dt or 0)
+      if acc >= 0.25 then acc = 0; QLF_ColorMarker() end
+    end)
   end
 end
 
@@ -2138,12 +2165,10 @@ local OPTIONS = {
   { "Game's waypoint marker for the selected quest", function() return DB.gameMarker ~= false end,
     function(v) DB.gameMarker = v; SetGameMarker(v); if v then PointArrow(selectedID) end end, nil,
     "The game's own marker in the world, with the distance, over where the selected quest goes." },
-  { color = true, label = "Marker color", indent = true,
-    get = function() local c = DB.markerColor; if c then return c[1], c[2], c[3] end return 1, 1, 1 end,
-    set = function(r, g, b) DB.markerColor = { r, g, b }; QLF_ColorMarker() end,
-    reset = function() DB.markerColor = nil; QLF_ColorMarker() end,
-    enabledWhen = function() return DB.gameMarker ~= false end,
-    tip = "Pick the marker's color. It turns gold when the quest is ready to hand in. Default puts back the game's normal look." },
+  { "Color by distance (red far, green close)", function() return DB.markerDistColor ~= false end,
+    function(v) DB.markerDistColor = v; QLF_ColorMarker() end, nil,
+    "The marker goes from red (far away) through yellow to green as you get close. Gold when the quest is ready to hand in. Off: the game's normal look.",
+    true, function() return DB.gameMarker ~= false end },
   { "3D arrow to the selected quest", function() return DB.arrow ~= false end,
     function(v) DB.arrow = v; f.arrow:SetChecked(v); if v then PointArrow(selectedID) elseif QLF_HideArrow then QLF_HideArrow() end end, nil,
     "Points to the quest's objective, or where to hand it in. Right-click the arrow to hide it." },
