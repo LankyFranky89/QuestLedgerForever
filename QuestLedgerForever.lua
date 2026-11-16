@@ -53,6 +53,39 @@ local function SetGameMarker(on)
   local cur = GetCVar and GetCVar("showInGameNavigation")
   if cur ~= want then pcall(SetCVar, "showInGameNavigation", want) end
 end
+-- Color the game's marker (diamond + distance text): your color, gold when the quest is ready to hand in
+local markerHooked
+function QLF_ColorMarker()
+  local stf = SuperTrackedFrame
+  if not stf then return end
+  local db = QuestLedgerForeverDB or {}
+  local r, g, b = 1, 1, 1
+  if db.markerColor then r, g, b = db.markerColor[1], db.markerColor[2], db.markerColor[3] end
+  local qid = C_SuperTrack and C_SuperTrack.GetSuperTrackedQuestID and C_SuperTrack.GetSuperTrackedQuestID()
+  local done = qid and qid > 0 and C_QuestLog and C_QuestLog.IsComplete and C_QuestLog.IsComplete(qid)
+  if done then r, g, b = 1, 0.82, 0 end
+  local custom = db.markerColor or done
+  -- the diamond (and arrow, when the target is off-screen)
+  for _, key in ipairs({ "Icon", "Arrow" }) do
+    local t = stf[key]
+    if t and t.SetVertexColor then
+      if custom then t:SetVertexColor(r, g, b) else t:SetVertexColor(1, 1, 1) end
+    end
+  end
+  local dt = stf.DistanceText
+  if dt and dt.SetTextColor then
+    if custom then dt:SetTextColor(r, g, b) else dt:SetTextColor(1, 0.82, 0) end
+  end
+  if not markerHooked then
+    markerHooked = true
+    -- Blizzard may reset the look when it updates the marker: re-apply after it
+    for _, fn in ipairs({ "UpdateIcon", "UpdateStateFor", "UpdateDistanceText" }) do
+      if type(stf[fn]) == "function" then hooksecurefunc(stf, fn, function() QLF_ColorMarker() end) end
+    end
+    stf:HookScript("OnShow", function() QLF_ColorMarker() end)
+  end
+end
+
 local function PointArrow(qid)
   if not qid then return end
   -- game marker: follows the "super tracked" quest
@@ -2000,6 +2033,7 @@ ev:SetScript("OnEvent", function(_, event)
     -- clicking a quest's ? / ... icon in the objective tracker: point the 3D arrow at it
     local qid = C_SuperTrack and C_SuperTrack.GetSuperTrackedQuestID and C_SuperTrack.GetSuperTrackedQuestID()
     if qid and qid > 0 and IndexForQuest(qid) then PointArrow(qid) end
+    QLF_ColorMarker()
     return
   end
   if event == "PLAYER_REGEN_ENABLED" then
@@ -2023,6 +2057,7 @@ ev:SetScript("OnEvent", function(_, event)
       DB.arrow = false
     end
     if DB.gameMarker ~= false then SetGameMarker(true) end
+    C_Timer.After(1, QLF_ColorMarker)
     if DB.pureMap == nil then DB.pureMap = true end
     if DB.pureMap and SetCVar then pcall(SetCVar, "questLogOpen", 0) end
     RouteQuestOpens()
@@ -2041,6 +2076,7 @@ ev:SetScript("OnEvent", function(_, event)
     end
     return
   end
+  if event == "QUEST_LOG_UPDATE" then QLF_ColorMarker() end -- gold as soon as the quest is ready to hand in
   if f:IsShown() and not pending then
     pending = true
     C_Timer.After(0.1, function() pending = nil; Refresh() end)
@@ -2102,6 +2138,12 @@ local OPTIONS = {
   { "Game's waypoint marker for the selected quest", function() return DB.gameMarker ~= false end,
     function(v) DB.gameMarker = v; SetGameMarker(v); if v then PointArrow(selectedID) end end, nil,
     "The game's own marker in the world, with the distance, over where the selected quest goes." },
+  { color = true, label = "Marker color", indent = true,
+    get = function() local c = DB.markerColor; if c then return c[1], c[2], c[3] end return 1, 1, 1 end,
+    set = function(r, g, b) DB.markerColor = { r, g, b }; QLF_ColorMarker() end,
+    reset = function() DB.markerColor = nil; QLF_ColorMarker() end,
+    enabledWhen = function() return DB.gameMarker ~= false end,
+    tip = "Pick the marker's color. It turns gold when the quest is ready to hand in. Right-click to reset." },
   { "3D arrow to the selected quest", function() return DB.arrow ~= false end,
     function(v) DB.arrow = v; f.arrow:SetChecked(v); if v then PointArrow(selectedID) elseif QLF_HideArrow then QLF_HideArrow() end end, nil,
     "Points to the quest's objective, or where to hand it in. Right-click the arrow to hide it." },
@@ -2127,6 +2169,14 @@ local function SyncAll()
           row:SetPoint("TOPLEFT", list.left, y)
           row:Show(); row.line:Show()
           y = y - 22
+        elseif o.color then
+          row:SetPoint("TOPLEFT", list.left + (o.indent and 24 or 4), y - 2)
+          row:Show(); row.label:Show()
+          row.swatch:SetColorTexture(o.get())
+          local on = not o.enabledWhen or o.enabledWhen()
+          row:SetEnabled(on); row:SetAlpha(on and 1 or 0.4)
+          row.label:SetFontObject(on and "GameFontHighlight" or "GameFontDisable")
+          y = y - 26
         elseif o.slider then
           row:SetPoint("TOPLEFT", list.left + 8, y - 22)
           row:Show(); row.label:Show()
@@ -2150,7 +2200,44 @@ local function BuildOptionList(parent, left, top)
   local list = { left = left, top = top }
   for i, o in ipairs(OPTIONS) do
     local row
-    if o.slider then
+    if o.color then
+      -- color swatch: click opens the game's color picker, right-click resets
+      row = CreateFrame("Button", nil, parent)
+      row:SetSize(18, 18)
+      row.border = row:CreateTexture(nil, "BACKGROUND"); row.border:SetAllPoints(); row.border:SetColorTexture(0.8, 0.7, 0.4, 1)
+      row.swatch = row:CreateTexture(nil, "ARTWORK")
+      row.swatch:SetPoint("TOPLEFT", 2, -2); row.swatch:SetPoint("BOTTOMRIGHT", -2, 2)
+      row.label = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+      row.label:SetPoint("LEFT", row, "RIGHT", 8, 0)
+      row.label:SetText(o.label)
+      row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+      row:SetScript("OnClick", function(b, btn)
+        if not DB then return end
+        if btn == "RightButton" then o.reset(); SyncAll(); return end
+        local r0, g0, b0 = o.get()
+        local function apply(r, g, bl) o.set(r, g, bl); b.swatch:SetColorTexture(r, g, bl) end
+        local function fromPicker()
+          local r, g, bl = ColorPickerFrame:GetColorRGB(); apply(r, g, bl)
+        end
+        local function cancel() apply(r0, g0, b0) end
+        if ColorPickerFrame.SetupColorPickerAndShow then
+          ColorPickerFrame:SetupColorPickerAndShow({ r = r0, g = g0, b = b0, hasOpacity = false,
+            swatchFunc = fromPicker, cancelFunc = cancel })
+        else
+          ColorPickerFrame.hasOpacity = false
+          ColorPickerFrame.previousValues = { r0, g0, b0 }
+          ColorPickerFrame.func = fromPicker
+          ColorPickerFrame.cancelFunc = cancel
+          ColorPickerFrame:SetColorRGB(r0, g0, b0)
+          ColorPickerFrame:Hide(); ShowUIPanel(ColorPickerFrame)
+        end
+      end)
+      row:SetScript("OnEnter", function(b)
+        GameTooltip:SetOwner(b, "ANCHOR_RIGHT"); GameTooltip:AddLine(o.label); GameTooltip:AddLine(o.tip, 1, 1, 1, true); GameTooltip:Show()
+      end)
+      row:SetScript("OnLeave", GameTooltip_Hide)
+      row.SetChecked = function() end
+    elseif o.slider then
       row = CreateFrame("Slider", nil, parent)
       row:SetOrientation("HORIZONTAL")
       row:SetSize(220, 16)
