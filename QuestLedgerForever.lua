@@ -146,12 +146,18 @@ local function EntryInfo(i)
     if not info then return end
     local complete = info.questID and C_QuestLog.IsComplete and C_QuestLog.IsComplete(info.questID)
     local failed = info.questID and C_QuestLog.IsFailed and C_QuestLog.IsFailed(info.questID)
-    return info.title, info.level, info.isHeader, complete, failed, info.questID, info.suggestedGroup
+    local elite = info.isElite
+    if not elite and info.questID and not info.isHeader and C_QuestLog.GetQuestTagInfo then
+      local ok, t = pcall(C_QuestLog.GetQuestTagInfo, info.questID)
+      if ok and t then elite = t.isElite or t.tagID == 1 or t.tagName == (ELITE or "Elite") end
+    end
+    return info.title, info.level, info.isHeader, complete, failed, info.questID, info.suggestedGroup, elite
   end
   local title, level, tag, isHeader, _, isComplete, _, qid = GetQuestLogTitle(i)
   if not title then return end
   local group = (type(tag) == "number" and tag > 0) and tag or nil
-  return title, level, isHeader, isComplete == 1 or isComplete == true, isComplete == -1, qid, group
+  local elite = tag == (ELITE or "Elite") or tag == "Elite"
+  return title, level, isHeader, isComplete == 1 or isComplete == true, isComplete == -1, qid, group, elite
 end
 
 local function IndexForQuest(qid)
@@ -191,8 +197,10 @@ local function IsWatched(qid, idx)
   return false
 end
 
-local function ToggleWatch(qid, idx)
+local tempWatch -- quest tracked only so "Show on Map" can draw its icon
+local function ToggleWatch(qid, idx, temp)
   idx = idx or (qid and IndexForQuest(qid))
+  if not temp and qid and qid == tempWatch then tempWatch = nil end -- the player's own choice wins
   local watched = IsWatched(qid, idx)
   local function try(fn, ...) if fn then return pcall(fn, ...) end end
   if watched then
@@ -279,47 +287,27 @@ local function PlaceFree()
   else f:SetPoint("CENTER") end
 end
 
--- While attached, scale the map so it is exactly as tall as the quest log
-local origMapScale
-local function MatchMapHeight(on)
-  if not WorldMapFrame or (InCombatLockdown and InCombatLockdown()) then return end
-  origMapScale = origMapScale or WorldMapFrame:GetScale()
-  local maxed = WorldMapFrame.IsMaximized and WorldMapFrame:IsMaximized()
-  if on and not maxed and DB.matchHeight ~= false then
-    local parentScale = (WorldMapFrame:GetParent() or UIParent):GetEffectiveScale()
-    local mh = WorldMapFrame:GetHeight()
-    if mh and mh > 0 then
-      local want = (f:GetHeight() * f:GetEffectiveScale()) / (mh * parentScale)
-      if math.abs(WorldMapFrame:GetScale() - want) > 0.001 then WorldMapFrame:SetScale(want) end
-    end
-  elseif math.abs(WorldMapFrame:GetScale() - origMapScale) > 0.001 then
-    WorldMapFrame:SetScale(origMapScale)
-  end
-end
-
--- Attach to map: sit beside the map (right side, or left if there's no room)
+-- Attach to map: sit beside the map (right side, or left if there's no room).
+local function MapEdge() return WorldMapFrame end
 local function Dock()
   if not (DB and DB.attach and WorldMapFrame and WorldMapFrame:IsShown()) then
     if docked then PlaceFree() end
-    MatchMapHeight(WorldMapFrame and WorldMapFrame:IsShown()) -- same height even when not attached
     return
   end
-  MatchMapHeight(true)
-  if QLF_ApplyMapPos then QLF_ApplyMapPos() end
+  local edge = MapEdge()
   local scale = f:GetEffectiveScale() / UIParent:GetEffectiveScale()
-  local mr, ml = WorldMapFrame:GetRight(), WorldMapFrame:GetLeft()
-  local ms = WorldMapFrame:GetEffectiveScale() / UIParent:GetEffectiveScale()
+  local mr, ml = edge:GetRight(), edge:GetLeft()
+  local ms = edge:GetEffectiveScale() / UIParent:GetEffectiveScale()
   local w = f:GetWidth() * scale
   f:ClearAllPoints()
   if mr and mr * ms + w <= UIParent:GetRight() then
-    f:SetPoint("TOPLEFT", WorldMapFrame, "TOPRIGHT", 2, 0)
+    f:SetPoint("TOPLEFT", edge, "TOPRIGHT", 2, 0)
     f:SetFrameStrata("DIALOG")
   elseif ml and ml * ms - w >= 0 then
-    f:SetPoint("TOPRIGHT", WorldMapFrame, "TOPLEFT", -2, 0)
+    f:SetPoint("TOPRIGHT", edge, "TOPLEFT", -2, 0)
     f:SetFrameStrata("DIALOG")
   else
-    PlaceFree() -- map is too wide (maximized): float instead
-    MatchMapHeight(false)
+    PlaceFree() -- map is too wide: float instead
     return
   end
   docked = true
@@ -391,7 +379,8 @@ mineTab:SetPoint("RIGHT", partyTab, "LEFT", -2, 0)
 
 local rows = {}
 local MAX_DOTS = 4
-for i = 1, NUM_ROWS do
+local MAX_ROWS = 60 -- enough for the tallest window
+for i = 1, MAX_ROWS do
   local b = CreateFrame("Button", nil, list)
   b:SetSize(290, ROW_H)
   b:SetPoint("TOPLEFT", 0, -(i - 1) * ROW_H)
@@ -430,16 +419,36 @@ for i = 1, NUM_ROWS do
       elseif e.q then api.OpenQuest(e.q, e.who) end
       return
     end
-    if e.header then
+    if e.header and IsShiftKeyDown() and btn ~= "RightButton" then
+      -- Shift-click a zone: track all its quests (or untrack all if they're all tracked)
+      local list, header = {}, nil
+      for i = 1, NumEntries() do
+        local title, _, isHeader, _, _, qid = EntryInfo(i)
+        if title then
+          if isHeader then header = title
+          elseif header == e.title then list[#list + 1] = { qid, i } end
+        end
+      end
+      local allOn = #list > 0
+      for _, q in ipairs(list) do if not IsWatched(q[1], q[2]) then allOn = false; break end end
+      for _, q in ipairs(list) do
+        if IsWatched(q[1], q[2]) == allOn then ToggleWatch(q[1], q[2]) end
+      end
+      Refresh()
+    elseif e.header then
       collapsed[e.title] = not collapsed[e.title]
       Refresh()
     elseif btn == "RightButton" then
       if QLF_ShowQuestMenu then QLF_ShowQuestMenu(s, e.qid) end
     elseif IsShiftKeyDown() then
-      local link = GetQuestLink and GetQuestLink(MODERN and e.qid or e.index)
-      if link then
-        local done = ChatEdit_InsertLink and ChatEdit_InsertLink(link)
-        if not done and ChatFrame_OpenChat then ChatFrame_OpenChat(link) end
+      -- like the classic quest log: chat box open = link the quest, otherwise track / untrack it
+      local chatOpen = ChatEdit_GetActiveWindow and ChatEdit_GetActiveWindow()
+      local link = chatOpen and GetQuestLink and GetQuestLink(MODERN and e.qid or e.index)
+      if link and ChatEdit_InsertLink then
+        ChatEdit_InsertLink(link)
+      else
+        ToggleWatch(e.qid, e.index)
+        Refresh()
       end
     else
       selectedID = e.qid
@@ -471,6 +480,7 @@ for i = 1, NUM_ROWS do
   end)
   b:SetScript("OnLeave", GameTooltip_Hide)
   rows[i] = b
+  if i > NUM_ROWS then b:Hide() end
 end
 
 list:EnableMouseWheel(true)
@@ -493,9 +503,12 @@ bg:SetTexCoord(0, 0.586, 0.02, 0.655)
 bg:SetVertexColor(1, 1, 1, 0.9)
 
 local INK = { 0.18, 0.12, 0.06 }
+local DW = 330 -- text width on the quest page (grows with the window)
+local fsList = {}
 local function FS(template)
   local s = dc:CreateFontString(nil, "OVERLAY", template)
-  s:SetWidth(330)
+  s:SetWidth(DW)
+  fsList[#fsList + 1] = s
   s:SetJustifyH("LEFT")
   s:SetTextColor(INK[1], INK[2], INK[3])
   return s
@@ -917,7 +930,7 @@ ShowDetails = function()
   local title, level = EntryInfo(idx)
   dTitle:SetText((level and level > 0 and ("[" .. level .. "] ") or "") .. (title or ""))
   UpdateChainIcon(selectedID)
-  dTitle:SetWidth(chainBtn:IsShown() and 280 or 330)
+  dTitle:SetWidth(chainBtn:IsShown() and DW - 50 or DW)
   local desc, objText = GetQuestLogQuestText()
   dObj:SetPoint("TOPLEFT", dTitle, "BOTTOMLEFT", 0, -8)
   dObj:SetText(objText or "")
@@ -1114,7 +1127,7 @@ local abandon = Btn("Abandon", 90, function()
   if MODERN and C_QuestLog.SetAbandonQuest then C_QuestLog.SetAbandonQuest() elseif SetAbandonQuest then SetAbandonQuest() end
   StaticPopup_Show("ABANDON_QUEST", title)
 end)
-abandon:SetPoint("BOTTOMLEFT", NATIVE and 6 or 12, NATIVE and 5 or 12)
+abandon:SetPoint("BOTTOMLEFT", NATIVE and 12 or 16, NATIVE and 5 or 12)
 
 local share = Btn("Share", 80, function()
   if selectedID and Select(selectedID) and QuestLogPushQuest then QuestLogPushQuest() end
@@ -1155,6 +1168,28 @@ local function OpenMapToQuest(qid)
   if WorldMapFrame and not WorldMapFrame:IsShown() then
     if ToggleWorldMap then ToggleWorldMap() else ShowUIPanel(WorldMapFrame) end
   end
+  -- the map only draws icons for tracked quests: track it while the map is open, then untrack again
+  if tempWatch and tempWatch ~= qid then
+    local old = tempWatch; tempWatch = nil
+    if IsWatched(old) then ToggleWatch(old, nil, true) end
+  end
+  if qid and not tempWatch and not IsWatched(qid) then
+    ToggleWatch(qid, nil, true)
+    if IsWatched(qid) then
+      tempWatch = qid
+      local function MapOpen()
+        if WorldMapFrame and WorldMapFrame:IsShown() then return true end
+      end
+      local t; t = C_Timer.NewTicker(0.5, function()
+        if tempWatch ~= qid then t:Cancel(); return end
+        if not MapOpen() then
+          t:Cancel(); tempWatch = nil
+          if IsWatched(qid) then ToggleWatch(qid, nil, true) end
+          if Refresh then Refresh() end
+        end
+      end)
+    end
+  end
   if mapID and mapID > 0 and WorldMapFrame and WorldMapFrame.SetMapID then WorldMapFrame:SetMapID(mapID) end
   if qid and C_SuperTrack and C_SuperTrack.SetSuperTrackedQuestID then pcall(C_SuperTrack.SetSuperTrackedQuestID, qid) end
 end
@@ -1164,12 +1199,11 @@ local mapBtn = Btn("Show on Map", 110, function()
   elseif selectedID and QuestMapFrame_OpenToQuestDetails then QuestMapFrame_OpenToQuestDetails(selectedID) -- routed only when pure
   else OpenMapToQuest(selectedID) end
 end)
-mapBtn:SetPoint("BOTTOMRIGHT", NATIVE and -6 or -12, NATIVE and 5 or 12)
-f.attach:ClearAllPoints()
-f.attach:SetPoint("BOTTOMLEFT", NATIVE and 12 or 14, NATIVE and 4 or 11)
-f.attach.label:SetFontObject("GameFontNormal")
+mapBtn:SetPoint("BOTTOMRIGHT", NATIVE and -22 or -26, NATIVE and 5 or 12)
+-- "Attach to map" is gone: the ledger is always its own window
+f.attach:Hide(); f.attach.label:Hide()
 abandon:ClearAllPoints()
-abandon:SetPoint("LEFT", f.attach.label, "RIGHT", 12, -1)
+abandon:SetPoint("BOTTOMLEFT", NATIVE and 12 or 16, NATIVE and 5 or 12)
 
 f.arrow = CreateFrame("CheckButton", nil, f, "UICheckButtonTemplate")
 f.arrow:SetSize(24, 24)
@@ -1240,7 +1274,7 @@ local function BuildMine()
   local header, quests = nil, 0
   local firstQuest
   for i = 1, NumEntries() do
-    local title, level, isHeader, complete, failed, qid, group = EntryInfo(i)
+    local title, level, isHeader, complete, failed, qid, group, elite = EntryInfo(i)
     if title then
       if isHeader then
         header = title
@@ -1251,7 +1285,7 @@ local function BuildMine()
         if not (header and collapsed[header]) then
           local inst = (not DB or DB.instIcons ~= false) and InstanceKind(qid, header) or nil
           entries[#entries + 1] = { title = title, level = level, complete = complete, failed = failed,
-            qid = qid, index = i, group = group, friends = Friends(qid), inst = inst, instName = inst and header }
+            qid = qid, index = i, group = group, elite = elite or (group and group > 1) or nil, friends = Friends(qid), inst = inst, instName = inst and header }
         end
       end
     end
@@ -1312,10 +1346,12 @@ local function DrawMineRow(b, e)
     b.icon:Hide()
   end
   local c = DiffColor(e.level)
-  b.text:SetText(("[%s] %s"):format(e.level or "?", e.title))
+  local elite = e.elite and DB and DB.eliteMark ~= false
+  b.text:SetText(("[%s%s] %s"):format(e.level or "?", elite and "+" or "", e.title))
   b.text:SetTextColor(c.r, c.g, c.b)
   if e.failed then b.tag:SetText("|cffff3030Failed|r")
   elseif e.complete then b.tag:SetText("|cff40ff40Complete|r")
+  elseif elite then b.tag:SetText("|cffffb400Elite|r" .. ((e.group and e.group > 1) and (" |cffaaaaaa(" .. e.group .. ")|r") or ""))
   elseif e.group and e.group > 1 then b.tag:SetText("|cffaaaaaaGroup " .. e.group .. "|r") end
   local right = 66
   if IsWatched(e.qid, e.index) then b.check:Show(); right = right + 14 end
@@ -1748,8 +1784,84 @@ f.greyBtn:SetScript("OnEnter", function(b)
 end)
 f.greyBtn:SetScript("OnLeave", GameTooltip_Hide)
 
+-- resize grip (bottom-right corner): changes width and height, text keeps its size
+local MIN_W, MIN_H, MAX_W, MAX_H = 720, 540, 1400, 1150
+if f.SetResizeBounds then f:SetResizeBounds(MIN_W, MIN_H, MAX_W, MAX_H)
+elseif f.SetMinResize then f:SetMinResize(MIN_W, MIN_H); f:SetMaxResize(MAX_W, MAX_H) end
+f:SetResizable(true)
+local function Relayout()
+  local w, h = f:GetWidth(), f:GetHeight()
+  -- taller: more rows in the list
+  local n = math.max(5, math.min(MAX_ROWS, math.floor((h - 108) / ROW_H)))
+  if n ~= NUM_ROWS then
+    NUM_ROWS = n
+    list:SetHeight(ROW_H * NUM_ROWS)
+    for i = NUM_ROWS + 1, MAX_ROWS do rows[i]:Hide() end
+  end
+  -- wider: more room for the quest page text
+  local dw = math.max(330, math.floor(w - 390))
+  if dw ~= DW then
+    DW = dw
+    dc:SetWidth(DW + 10)
+    for _, fs in ipairs(fsList) do fs:SetWidth(DW) end
+  end
+end
+local function ApplySize()
+  if not DB then return end
+  f:SetScale(1); DB.scale = nil -- older "scale" setting is gone
+  local sz = DB.size
+  f:SetSize(sz and sz[1] or MIN_W, sz and sz[2] or MIN_H)
+  Relayout()
+end
+f:HookScript("OnSizeChanged", function()
+  Relayout()
+  if f:IsShown() and Refresh then Refresh() end
+end)
+local grip = CreateFrame("Button", nil, f)
+grip:SetSize(16, 16)
+grip:SetPoint("BOTTOMRIGHT", -4, 6)
+grip:SetFrameLevel(f:GetFrameLevel() + 20)
+grip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+grip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+local function UpdateGrip()
+  if DB and DB.resizable ~= false then grip:Show() else grip:Hide() end
+end
+grip:SetScript("OnMouseDown", function(s, btn)
+  if btn ~= "LeftButton" then return end
+  s.sizing = true
+  f:StartSizing("BOTTOMRIGHT")
+end)
+grip:SetScript("OnMouseUp", function(s)
+  if not s.sizing then return end
+  s.sizing = nil
+  f:StopMovingOrSizing()
+  if not DB then return end
+  DB.size = { math.floor(f:GetWidth() + 0.5), math.floor(f:GetHeight() + 0.5) }
+  if docked then Dock()
+  else
+    local p, _, rp, x, y = f:GetPoint()
+    DB.pos = { p, rp, x, y }
+  end
+end)
+grip:SetScript("OnEnter", function(b)
+  GameTooltip:SetOwner(b, "ANCHOR_RIGHT")
+  GameTooltip:AddLine("Resize")
+  GameTooltip:AddLine("Drag to change the width and height. Right-click: normal size.", 1, 1, 1, true)
+  GameTooltip:Show()
+end)
+grip:SetScript("OnLeave", GameTooltip_Hide)
+grip:RegisterForClicks("RightButtonUp")
+grip:SetScript("OnClick", function()
+  if not DB then return end
+  DB.size = nil
+  ApplySize()
+  if docked then Dock() else PlaceFree() end
+end)
+
 f:SetScript("OnShow", function()
   if DB then f.attach:SetChecked(DB.attach and true or false) end
+  ApplySize(); UpdateGrip()
   -- the arrow option only exists when Rally Point is loaded
   f.units:SetText(Units())
   if DB then f.arrow:SetChecked(DB.arrow ~= false) end
@@ -1765,6 +1877,21 @@ end
 QuestLedgerForever_Toggle = Toggle
 BINDING_HEADER_QUESTLEDGERFOREVER = "Quest Ledger Forever"
 BINDING_NAME_QUESTLEDGERFOREVER_TOGGLE = "Toggle Quest Ledger"
+
+-- Used by QuestMates: show / leave the party quest list.
+function QuestLedgerForever_ToggleParty()
+  if f:IsShown() and mode == "party" then
+    mode = "mine"
+    if DB and DB.attach then Refresh() else f:Hide() end
+  else
+    mode = "party"
+    f:Show()
+    Refresh()
+  end
+  Dock()
+  return mode == "party"
+end
+function QuestLedgerForever_IsPartyShown() return f:IsShown() and mode == "party" end
 
 -- Used by QuestMates: open one of my quests in this window. Returns true if handled.
 function QuestLedgerForever_OpenQuest(qid)
@@ -1801,83 +1928,7 @@ function QuestLedgerForever_OnMatesUpdate()
   C_Timer.After(0.1, function() matesPending = nil; Refresh() end)
 end
 
----------------------------------------------------------------- pure map
--- Hide the quest list side panel inside the world map, so M is just the map.
-local function SidePanel() return QuestMapFrame or (WorldMapFrame and WorldMapFrame.QuestLog) end
-local function SideToggle()
-  if not WorldMapFrame then return end
-  local t = WorldMapFrame.SidePanelToggle or (WorldMapFrame.BorderFrame and WorldMapFrame.BorderFrame.SidePanelToggle)
-  if t then return t end
-  local function scan(fr, depth)
-    if depth > 4 then return end
-    for _, c in ipairs({ fr:GetChildren() }) do
-      if c.OpenButton and c.CloseButton then return c end
-      local hit = scan(c, depth + 1); if hit then return hit end
-    end
-  end
-  return scan(WorldMapFrame, 0)
-end
-
-local function PanelOpen()
-  local q = SidePanel()
-  if q and q:IsShown() then return true end
-  if WorldMapFrame and WorldMapFrame.IsQuestLogPanelShown then
-    local ok, v = pcall(WorldMapFrame.IsQuestLogPanelShown, WorldMapFrame); if ok and v then return true end
-  end
-  return false
-end
-
-local waitCombat, applying, userToggling
-local toggleHooked
-local function HookToggle(t)
-  if toggleHooked or not t then return end
-  toggleHooked = true
-  -- the map's own "?" button switches between pure map and the old Map & Quest Log
-  local function down() userToggling = true end
-  local function up()
-    C_Timer.After(0.05, function()
-      DB.pureMap = not PanelOpen()
-      userToggling = false
-      local bf = WorldMapFrame.BorderFrame
-      if bf and bf.SetTitle then pcall(bf.SetTitle, bf, DB.pureMap and "Map" or (MAP_AND_QUEST_LOG or "Map & Quest Log")) end
-    end)
-  end
-  for _, b in ipairs({ t, t.OpenButton, t.CloseButton }) do
-    if b and b.HookScript then
-      b:HookScript("OnMouseDown", down)
-      b:HookScript("OnMouseUp", up)
-    end
-  end
-end
-
-local function ApplyPureMap()
-  if not (DB and WorldMapFrame) or applying or userToggling then return end
-  local pure = DB.pureMap ~= false
-  local t = SideToggle()
-  if t then
-    -- option off: the map's "?" button disappears; on: it works exactly like Blizzard's
-    t:SetAlpha(pure and 0 or 1); t:EnableMouse(not pure)
-    if t.OpenButton then t.OpenButton:EnableMouse(not pure) end
-    if t.CloseButton then t.CloseButton:EnableMouse(not pure) end
-  end
-  local bf = WorldMapFrame.BorderFrame
-  if bf and bf.SetTitle then pcall(bf.SetTitle, bf, pure and "Map" or (MAP_AND_QUEST_LOG or "Map & Quest Log")) end
-  if not pure or not PanelOpen() then return end
-  if InCombatLockdown and InCombatLockdown() then waitCombat = true return end
-  applying = true
-  -- close it the way the game does, so the map shrinks with it (no empty space)
-  if WorldMapFrame.SetQuestLogPanelShown then
-    pcall(WorldMapFrame.SetQuestLogPanelShown, WorldMapFrame, false)
-  elseif WorldMapFrame.HandleUserActionToggleSidePanel then
-    pcall(WorldMapFrame.HandleUserActionToggleSidePanel, WorldMapFrame)
-  elseif t and t.CloseButton then
-    pcall(t.CloseButton.Click, t.CloseButton)
-  end
-  if SetCVar then pcall(SetCVar, "questLogOpen", 0) end
-  -- let the map re-lay itself out at the narrow size
-  if WorldMapFrame.SynchronizeDisplayState then pcall(WorldMapFrame.SynchronizeDisplayState, WorldMapFrame) end
-  applying = false
-end
+---------------------------------------------------------------- map
 
 -- Quest tracker / other UI "open this quest" calls: show it in our quest log, not the map panel.
 local origOpen = {}
@@ -1949,77 +2000,8 @@ local function HookMapPins()
   end
 end
 
--- Movable map (drag the title bar) and map transparency
-local mapHandle
-local function ApplyMapAlpha()
-  if WorldMapFrame then WorldMapFrame:SetAlpha(DB and DB.mapAlpha or 1) end
-end
-local function ApplyMapPos()
-  -- the drag strip only catches the mouse while "Movable map" is on
-  if mapHandle then mapHandle:EnableMouse(DB and DB.mapMovable == true) end
-  if not (WorldMapFrame and DB and DB.mapMovable and DB.mapPos) then return end
-  if WorldMapFrame.IsMaximized and WorldMapFrame:IsMaximized() then return end
-  if InCombatLockdown and InCombatLockdown() then return end
-  local p = DB.mapPos
-  pcall(function()
-    WorldMapFrame:ClearAllPoints()
-    WorldMapFrame:SetPoint(p[1], UIParent, p[2], p[3], p[4])
-  end)
-end
--- put the map back where the game normally places it
-local function ResetMapPos()
-  if not WorldMapFrame or (InCombatLockdown and InCombatLockdown()) then return end
-  if WorldMapFrame.SetUserPlaced then pcall(WorldMapFrame.SetUserPlaced, WorldMapFrame, false) end
-  if mapHandle then mapHandle:EnableMouse(false) end
-  if WorldMapFrame:IsShown() then
-    if UpdateUIPanelPositions then pcall(UpdateUIPanelPositions, WorldMapFrame) end
-    if WorldMapFrame.SynchronizeDisplayState then pcall(WorldMapFrame.SynchronizeDisplayState, WorldMapFrame) end
-  end
-end
-QLF_ApplyMapPos = ApplyMapPos
-local function SetupMapMove()
-  if mapHandle or not WorldMapFrame then return end
-  WorldMapFrame:SetMovable(true)
-  WorldMapFrame:SetClampedToScreen(true)
-  mapHandle = CreateFrame("Frame", nil, WorldMapFrame)
-  mapHandle:SetPoint("TOPLEFT", 60, 0)        -- leave the portrait/corner alone
-  mapHandle:SetPoint("TOPRIGHT", -60, 0)      -- leave the maximize/close buttons alone
-  mapHandle:SetHeight(22)
-  mapHandle:SetFrameLevel(WorldMapFrame:GetFrameLevel() + 50)
-  mapHandle:EnableMouse(DB and DB.mapMovable == true)
-  mapHandle:RegisterForDrag("LeftButton")
-  mapHandle:SetScript("OnDragStart", function()
-    if not DB.mapMovable or (InCombatLockdown and InCombatLockdown()) then return end
-    if WorldMapFrame.IsMaximized and WorldMapFrame:IsMaximized() then return end
-    WorldMapFrame:StartMoving()
-  end)
-  mapHandle:SetScript("OnDragStop", function()
-    WorldMapFrame:StopMovingOrSizing()
-    -- don't let WoW save the spot by itself (it would fight us, and stick when the option is off)
-    if WorldMapFrame.SetUserPlaced then pcall(WorldMapFrame.SetUserPlaced, WorldMapFrame, false) end
-    -- offsets are in the map's own scale (it may be scaled to match the Ledger's height)
-    local l, t = WorldMapFrame:GetLeft(), WorldMapFrame:GetTop()
-    if l and t then DB.mapPos = { "TOPLEFT", "BOTTOMLEFT", l, t } end
-    ApplyMapPos()
-    Dock()
-  end)
-  mapHandle:SetScript("OnEnter", function(h)
-    if not DB.mapMovable then return end
-    GameTooltip:SetOwner(h, "ANCHOR_TOP"); GameTooltip:AddLine("Drag to move the map"); GameTooltip:Show()
-  end)
-  mapHandle:SetScript("OnLeave", GameTooltip_Hide)
-  -- the game re-places the map when panels open/close: put it back where you left it
-  if UpdateUIPanelPositions then hooksecurefunc("UpdateUIPanelPositions", function() if WorldMapFrame:IsShown() then ApplyMapPos() end end) end
-end
-
-local function HookPureMap()
+local function HookMapWindow()
   if not WorldMapFrame then return end
-  SetupMapMove()
-  WorldMapFrame:HookScript("OnShow", function()
-    ApplyMapAlpha()
-    ApplyMapPos()  -- same frame: no visible jump from the default spot
-    C_Timer.After(0, function() ApplyMapPos(); Dock() end)
-  end)
   WorldMapFrame:HookScript("OnShow", function()
     if DB.attach then f:Show() end
     C_Timer.After(0, Dock)
@@ -2037,10 +2019,6 @@ local function HookPureMap()
     pinPending = true
     C_Timer.After(0, function() pinPending = nil; HookMapPins() end)
   end) end
-  WorldMapFrame:HookScript("OnShow", function() C_Timer.After(0, ApplyPureMap) end)
-  local q = SidePanel()
-  if q then q:HookScript("OnShow", function() C_Timer.After(0, ApplyPureMap) end) end
-  ApplyPureMap()
 end
 
 ---------------------------------------------------------------- events
@@ -2064,13 +2042,14 @@ ev:SetScript("OnEvent", function(_, event)
     return
   end
   if event == "PLAYER_REGEN_ENABLED" then
-    if waitCombat then waitCombat = nil; ApplyPureMap() end
     return
   end
   if event == "PLAYER_LOGIN" then
     QuestLedgerForeverDB = QuestLedgerForeverDB or {}
     DB = QuestLedgerForeverDB
     if DB.hookKey == nil then DB.hookKey = true end
+    DB.attach = nil -- attach-to-map feature removed
+    ApplySize(); UpdateGrip()
     PlaceFree()
     QLF_OrigToggleQuestLog = QLF_OrigToggleQuestLog or ToggleQuestLog
     if DB.hookKey then
@@ -2084,11 +2063,9 @@ ev:SetScript("OnEvent", function(_, event)
       DB.arrow = false
     end
     if DB.gameMarker ~= false then SetGameMarker(true) end
-    C_Timer.After(1, QLF_ColorMarker)
-    if DB.pureMap == nil then DB.pureMap = true end
-    if DB.pureMap and SetCVar then pcall(SetCVar, "questLogOpen", 0) end
+    C_Timer.After(1, function() if QLF_ColorMarker then QLF_ColorMarker() end end)
     RouteQuestOpens()
-    HookPureMap()
+    HookMapWindow()
     -- PopQuest / LevelTag are now part of Quest Ledger: their old addons were turned off, a reload finishes it
     if QuestLedgerForever_Replaced and #QuestLedgerForever_Replaced > 0 then
       local names = table.concat(QuestLedgerForever_Replaced, " and ")
@@ -2120,33 +2097,19 @@ local OPTIONS = {
       DB.hookKey = v
       if v then ToggleQuestLog = Toggle elseif QLF_OrigToggleQuestLog then ToggleQuestLog = QLF_OrigToggleQuestLog end
     end, nil, "Off: L opens the game's own Map & Quest Log again." },
-  { "Attach to the map", function() return DB.attach == true end,
-    function(v) DB.attach = v; f.attach:SetChecked(v); Dock() end, nil,
-    "Sits beside the map and opens and closes with it." },
+  { "Resizable (drag the bottom-right corner)", function() return DB.resizable ~= false end,
+    function(v) DB.resizable = v; UpdateGrip() end, nil,
+    "Drag the corner to change the width and height. The text stays the same size. Right-click the corner for normal size." },
   { "Open quests here (map icons and tracker)", function() return DB.mapClicks ~= false and DB.routeOpens ~= false end,
     function(v) DB.mapClicks = v; DB.routeOpens = v end, nil,
     "Clicking a quest icon on the map or a quest in the tracker opens it in the Quest Ledger." },
-  { header = "Map" },
-  { "Default Quest Log on the map (? button)", function() return DB.pureMap == false end,
-    function(v) if (DB.pureMap == false) ~= v then SlashCmdList.QUESTLEDGERFOREVER("map") end end, nil,
-    "On: the map's ? button opens Blizzard's quest list as usual. Off: the ? is hidden and the map stays plain." },
-  { "Movable map (drag the title bar)", function() return DB.mapMovable == true end,
-    function(v)
-      DB.mapMovable = v
-      if v then ApplyMapPos() else DB.mapPos = nil; ResetMapPos() end
-    end, nil,
-    "Drag the map by its title bar; it remembers where you put it. Turning this off puts it back in its normal spot." },
-  { slider = true, label = "Map transparency", min = 30, max = 100, step = 5,
-    get = function() return math.floor((DB.mapAlpha or 1) * 100 + 0.5) end,
-    set = function(v) DB.mapAlpha = v / 100; ApplyMapAlpha() end,
-    tip = "How see-through the map is. 100% = solid." },
-  { "Same height as the Quest Ledger", function() return DB.matchHeight ~= false end,
-    function(v) DB.matchHeight = v; Dock() end, nil,
-    "Scales the map so both windows are equally tall." },
   { header = "Extras" },
   { "Quest chain icon", function() return DB.chains ~= false end,
     function(v) DB.chains = v; Refresh() end, nil,
     "Book icon on the quest page that lists the whole quest chain." },
+  { "Mark elite quests", function() return DB.eliteMark ~= false end,
+    function(v) DB.eliteMark = v; Refresh() end, nil,
+    "Elite quests get a + after the level, like [26+], and a gold \"Elite\" tag." },
   { "Dungeon and raid icons", function() return DB.instIcons ~= false end,
     function(v) DB.instIcons = v; Refresh() end, nil,
     "A portal icon in front of quests for a dungeon (purple) or raid (red)." },
@@ -2387,16 +2350,8 @@ SlashCmdList.QUESTLEDGERFOREVER = function(msg)
     print("|cffffd200Quest Ledger:|r L key " .. (DB.hookKey and "opens this quest log" or "uses the default Map & Quest Log") .. " (/reload to apply).")
   elseif msg == "reset" then
     DB.pos = nil
+    DB.size = nil; ApplySize()
     if not docked then PlaceFree() end
-  elseif msg == "attach" then
-    DB.attach = not DB.attach
-    f.attach:SetChecked(DB.attach)
-    print("|cffffd200Quest Ledger:|r Quest log " .. (DB.attach and "attached to the map" or "detached from the map") .. ".")
-    Dock()
-  elseif msg == "map" then
-    DB.pureMap = not DB.pureMap
-    print("|cffffd200Quest Ledger:|r Default Quest Log on the map " .. (DB.pureMap and "off (? hidden)" or "on (use the map's ? button)") .. ".")
-    ApplyPureMap()
   elseif msg == "options" or msg == "config" or msg == "settings" then
     ToggleOptions()
   elseif msg == "arrow" then
@@ -2407,20 +2362,9 @@ SlashCmdList.QUESTLEDGERFOREVER = function(msg)
     SetUnits(Units() == "m" and "yd" or "m")
     f.units:SetText(Units())
     print("|cffffd200Quest Ledger:|r arrow distance in " .. (Units() == "m" and "meters" or "yards") .. ".")
-  elseif msg == "height" then
-    DB.matchHeight = DB.matchHeight == false
-    print("|cffffd200Quest Ledger:|r Map height " .. (DB.matchHeight ~= false and "matches the quest log" or "stays at its normal size") .. ".")
-    Dock()
   elseif msg == "mapclick" then
     DB.mapClicks = DB.mapClicks == false
     print("|cffffd200Quest Ledger:|r Clicking quest icons on the map " .. (DB.mapClicks ~= false and "opens the quest log" or "does the default action") .. ".")
-  elseif msg == "mapdebug" then
-    local t = SideToggle()
-    print("QLF map: panel=" .. tostring(SidePanel() ~= nil) .. " open=" .. tostring(PanelOpen())
-      .. " toggle=" .. tostring(t ~= nil)
-      .. " SetQuestLogPanelShown=" .. tostring(WorldMapFrame and WorldMapFrame.SetQuestLogPanelShown ~= nil)
-      .. " HandleUserActionToggleSidePanel=" .. tostring(WorldMapFrame and WorldMapFrame.HandleUserActionToggleSidePanel ~= nil)
-      .. " width=" .. tostring(WorldMapFrame and math.floor(WorldMapFrame:GetWidth())))
   elseif msg == "party" then
     mode = "party"
     f:Show()

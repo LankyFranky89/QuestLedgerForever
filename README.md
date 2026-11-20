@@ -5,12 +5,15 @@
 The classic, separate quest log for WoW Forever, with modern features.
 
 - Its own quest log window again (L), with the map (M) as just the map
-- Optional: attach the log beside the map, same height
+- Resizable: drag the corner for more quests and a wider quest page, text stays the same size
+- Shift-click a quest to track it (or link it while chatting), Shift-click a zone to track all its quests
+- Elite quests marked like [26+] with a gold Elite tag
 - Quest chain icon: see every step of a chain, what's done and what's next
 - Reward markers: bag for the best vendor price, green arrow for upgrades for your spec
 - 3D waypoint arrow to the selected quest (yards or meters)
 - Grey quest cleanup, with the XP each quest still gives
 - Party quests, friend dots and progress with [QuestMates](https://github.com/LankyFranky89/QuestMates)
+- Show on Map shows the quest icon even if you don't track it
 - Right-click menu: track, share, link, show on map, point arrow, abandon
 
 Commands: `/ledger` (or `/qlf`), `/ledger options`. Settings are also in Options > AddOns.
