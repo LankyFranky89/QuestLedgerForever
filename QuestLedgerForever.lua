@@ -1938,6 +1938,8 @@ local function RouteQuestOpens()
     if fn and not origOpen[name] then
       origOpen[name] = fn
       _G[name] = function(arg, ...)
+        -- a left-click on a map quest icon only tracks it: swallow the map's own "open quest" from that click
+        if QLF_SwallowOpenUntil and GetTime() < QLF_SwallowOpenUntil then return end
         if DB and DB.routeOpens ~= false then
           local qid = arg
           if name == "QuestLog_OpenToQuestIndex" then
@@ -1964,14 +1966,33 @@ local function PinQuestID(p)
   local q = p.questID or (p.GetQuestID and p:GetQuestID())
   if type(q) == "number" and q > 0 then return q end
 end
+-- Map quest icons: left-click tracks / untracks the quest, right-click opens it in this quest log.
 local function HookPin(p)
-  if p.qlfHooked or not p.HookScript or not IsIconPin(p) then return end
+  if not p.HookScript or not IsIconPin(p) then return end
+  -- let right-clicks reach the icon (the map normally passes them through to zoom out);
+  -- the game only allows changing this outside combat
+  if p.SetPassThroughButtons and not (InCombatLockdown and InCombatLockdown()) and DB and DB.mapClicks ~= false then
+    pcall(p.SetPassThroughButtons, p)
+  end
+  if p.qlfHooked then return end
   p.qlfHooked = true
   -- react on mouse DOWN: the map swallows some mouse-ups (it checks for map dragging)
   p:HookScript("OnMouseDown", function(pin, btn)
-    if btn ~= "LeftButton" or (DB and DB.mapClicks == false) then return end
+    if DB and DB.mapClicks == false then return end
     local qid = PinQuestID(pin)
-    if qid and IndexForQuest(qid) then
+    if not (qid and IndexForQuest(qid)) then return end
+    if btn == "LeftButton" then
+      QLF_SwallowOpenUntil = GetTime() + 0.5
+      -- left-click: point the game's arrow at this quest and make sure it's tracked (never untracks,
+      -- so the icon stays on the map); clicking the quest that already has the pointer changes nothing
+      if not IsWatched(qid) then ToggleWatch(qid) end
+      local function point()
+        if C_SuperTrack and C_SuperTrack.SetSuperTrackedQuestID then pcall(C_SuperTrack.SetSuperTrackedQuestID, qid) end
+      end
+      point()
+      C_Timer.After(0.05, point) -- the pin's own click (on release) can change it; set it again after
+      Refresh()
+    elseif btn == "RightButton" then
       QuestLedgerForever_OpenQuest(qid)
       -- the pin's own click (on release) can reset the selection; re-apply it after, so the icon lights up
       C_Timer.After(0.05, function()
@@ -2062,6 +2083,9 @@ ev:SetScript("OnEvent", function(_, event)
       if DB.gameMarker == nil then DB.gameMarker = true end
       DB.arrow = false
     end
+    -- WoW Forever never shows the game's diamond (its navigation always reports the target as invalid),
+    -- so the 3D arrow comes back on once for everyone
+    if not DB.arrowBack then DB.arrowBack = true; DB.arrow = true end
     if DB.gameMarker ~= false then SetGameMarker(true) end
     C_Timer.After(1, function() if QLF_ColorMarker then QLF_ColorMarker() end end)
     RouteQuestOpens()
@@ -2102,7 +2126,7 @@ local OPTIONS = {
     "Drag the corner to change the width and height. The text stays the same size. Right-click the corner for normal size." },
   { "Open quests here (map icons and tracker)", function() return DB.mapClicks ~= false and DB.routeOpens ~= false end,
     function(v) DB.mapClicks = v; DB.routeOpens = v end, nil,
-    "Clicking a quest icon on the map or a quest in the tracker opens it in the Quest Ledger." },
+    "Map quest icons: left-click points the arrow at the quest and tracks it, right-click opens it in the Quest Ledger. Quests clicked in the tracker open here too." },
   { header = "Extras" },
   { "Quest chain icon", function() return DB.chains ~= false end,
     function(v) DB.chains = v; Refresh() end, nil,
@@ -2364,7 +2388,7 @@ SlashCmdList.QUESTLEDGERFOREVER = function(msg)
     print("|cffffd200Quest Ledger:|r arrow distance in " .. (Units() == "m" and "meters" or "yards") .. ".")
   elseif msg == "mapclick" then
     DB.mapClicks = DB.mapClicks == false
-    print("|cffffd200Quest Ledger:|r Clicking quest icons on the map " .. (DB.mapClicks ~= false and "opens the quest log" or "does the default action") .. ".")
+    print("|cffffd200Quest Ledger:|r Clicking quest icons on the map " .. (DB.mapClicks ~= false and "points to it and tracks it (left) / opens the quest log (right)" or "does the default action") .. ".")
   elseif msg == "party" then
     mode = "party"
     f:Show()
