@@ -1527,6 +1527,48 @@ local function Locate(t)
   if m then t.cont, t.wx, t.wy = WorldPos(m, x, y) else t.cont = nil end
 end
 
+-- quest on the other continent: name it and the nearest boat / zeppelin there
+local CONT_NAME = { [0] = "Eastern Kingdoms", [1] = "Kalimdor" }
+local ROUTES = { -- uiMap, x, y, name of each end; fac = only that faction can use it
+  { a = { 1437, 0.051, 0.634, "Menethil Harbor" }, b = { 1439, 0.324, 0.436, "Auberdine" }, kind = "boat", fac = "Alliance" },
+  { a = { 1437, 0.051, 0.634, "Menethil Harbor" }, b = { 1445, 0.718, 0.564, "Theramore" }, kind = "boat", fac = "Alliance" },
+  { a = { 1434, 0.258, 0.733, "Booty Bay" }, b = { 1413, 0.636, 0.388, "Ratchet" }, kind = "boat" },
+  { a = { 1420, 0.609, 0.588, "Undercity" }, b = { 1411, 0.509, 0.136, "Orgrimmar" }, kind = "zeppelin", fac = "Horde" },
+  { a = { 1434, 0.316, 0.290, "Grom'gol" }, b = { 1411, 0.506, 0.126, "Orgrimmar" }, kind = "zeppelin", fac = "Horde" },
+}
+local function EndPos(e)
+  if e.c == nil then
+    local c, x, y = WorldPos(e[1], e[2], e[3])
+    e.c, e.x, e.y = c or false, x, y
+  end
+  if e.c == false then return end
+  return e.c, e.x, e.y
+end
+local function WayThere(cont, px, py, t)
+  local fac = UnitFactionGroup("player")
+  local best, bestD
+  for _, r in ipairs(ROUTES) do
+    if not r.fac or r.fac == fac then
+      for _, dir in ipairs({ { r.a, r.b }, { r.b, r.a } }) do
+        local from, to = dir[1], dir[2]
+        local fc, fx, fy = EndPos(from)
+        local tc, tx, ty = EndPos(to)
+        if fc == cont and tc == t.cont then
+          local d = math.sqrt((fx - px) ^ 2 + (fy - py) ^ 2) + math.sqrt((tx - t.wx) ^ 2 + (ty - t.wy) ^ 2)
+          if not bestD or d < bestD then best, bestD = { from[4], to[4], r.kind, fx, fy }, d end
+        end
+      end
+    end
+  end
+  return best
+end
+local function OtherContinentText(cont, px, py, t)
+  local name = CONT_NAME[t.cont] or "another continent"
+  local w = px and WayThere(cont, px, py, t)
+  if w then return ("|cffff9933%s - %s from %s to %s|r"):format(name, w[3], w[1], w[2]), w[4], w[5] end
+  return ("|cffff9933In %s|r"):format(name)
+end
+
 local tick, relocate = 0, 0
 af:SetScript("OnUpdate", function(s, dt)
   tick = tick + dt; relocate = relocate + dt
@@ -1538,13 +1580,20 @@ af:SetScript("OnUpdate", function(s, dt)
   local cont, px, py = PlayerWorldPos()
   if not t.cont then s.arrow:Hide(); s.dist:SetText("|cff999999No location for this quest|r"); return end
   if not cont then s.arrow:Hide(); s.dist:SetText("|cff999999No position here|r"); return end
-  if cont ~= t.cont then s.arrow:Hide(); s.dist:SetText("|cff999999On another continent|r"); return end
-  local dx, dy = t.wx - px, t.wy - py
+  local gx, gy = t.wx, t.wy
+  local prefix = ""
+  if cont ~= t.cont then
+    -- other continent: point at the nearest boat / zeppelin instead
+    local txt, bx, by = OtherContinentText(cont, px, py, t)
+    if not bx then s.arrow:Hide(); s.dist:SetText(txt); return end
+    gx, gy, prefix = bx, by, txt .. "\n"
+  end
+  local dx, dy = gx - px, gy - py
   local yards = math.sqrt(dx * dx + dy * dy)
-  if yards <= 8 then s.arrow:Hide(); s.dist:SetText("|cff40ff40You're here|r"); return end
+  if yards <= 8 then s.arrow:Hide(); s.dist:SetText(prefix .. "|cff40ff40You're here|r"); return end
   local facing = GetPlayerFacing and GetPlayerFacing()
   if facing then SetArrowAngle(s.arrow, math.atan2(dy, dx) - facing); s.arrow:Show() else s.arrow:Hide() end
-  if Units() == "m" then s.dist:SetText(("%d m"):format(yards * 0.9144)) else s.dist:SetText(("%d yd"):format(yards)) end
+  if Units() == "m" then s.dist:SetText(prefix .. ("%d m"):format(yards * 0.9144)) else s.dist:SetText(prefix .. ("%d yd"):format(yards)) end
 end)
 
 function QLF_OwnArrow(qid, announce)
