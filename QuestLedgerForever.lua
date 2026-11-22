@@ -1493,6 +1493,260 @@ local function SetArrowAngle(tex, angle)
 end
 
 local arrowTarget -- { qid, title, cont, wx, wy }
+------------------------------------------------------------------------
+-- Edit Mode ("Edit UI") support: shows with Blizzard's highlight, drag to move
+-- (saved per Edit Mode layout), click for a small settings panel
+------------------------------------------------------------------------
+local EM = { items = {} }
+function EM.Layout()
+  local ok, info = pcall(function()
+    return EditModeManagerFrame and EditModeManagerFrame.GetActiveLayoutInfo and EditModeManagerFrame:GetActiveLayoutInfo()
+  end)
+  if ok and type(info) == "table" and info.layoutName then return info.layoutName end
+  if C_EditMode and C_EditMode.GetLayouts then
+    local ok2, l = pcall(C_EditMode.GetLayouts)
+    if ok2 and type(l) == "table" and l.activeLayout then
+      local e = l.layouts and l.layouts[l.activeLayout - 2]
+      if e and e.layoutName then return e.layoutName end
+      return "preset" .. l.activeLayout
+    end
+  end
+  return "default"
+end
+function EM.Active()
+  return EditModeManagerFrame and EditModeManagerFrame.IsEditModeActive and EditModeManagerFrame:IsEditModeActive() or false
+end
+
+local function HasAtlas(a) return C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(a) and true or false end
+local function Piece(sel, layer, atlas, r, g, b, a)
+  local t = sel:CreateTexture(nil, layer)
+  if HasAtlas(atlas) then t:SetAtlas(atlas) else t:SetColorTexture(r or 0.25, g or 0.6, b or 1, a or 0.35) end
+  return t
+end
+local function Highlight(sel)
+  local E = 16
+  local c = Piece(sel, "BACKGROUND", "editmode-actionbar-highlight-nineslice-center", 0.25, 0.6, 1, 0.25)
+  c:SetPoint("TOPLEFT", E / 2, -E / 2); c:SetPoint("BOTTOMRIGHT", -E / 2, E / 2)
+  local corners = {}
+  for i, pt in ipairs({ "TOPLEFT", "TOPRIGHT", "BOTTOMLEFT", "BOTTOMRIGHT" }) do
+    local t = Piece(sel, "BORDER", "editmode-actionbar-highlight-nineslice-corner", 0.3, 0.7, 1, 0.9)
+    t:SetSize(E, E); t:SetPoint(pt)
+    local l, r, tp, bt = 0, 1, 0, 1
+    if pt:find("RIGHT") then l, r = 1, 0 end
+    if pt:find("BOTTOM") then tp, bt = 1, 0 end
+    if t:GetAtlas() then t:SetTexCoord(l, r, tp, bt) end
+    corners[pt] = t
+  end
+  local top = Piece(sel, "BORDER", "_editmode-actionbar-highlight-nineslice-edgetop", 0.3, 0.7, 1, 0.9)
+  top:SetPoint("TOPLEFT", corners.TOPLEFT, "TOPRIGHT"); top:SetPoint("BOTTOMRIGHT", corners.TOPRIGHT, "BOTTOMLEFT")
+  local bot = Piece(sel, "BORDER", "_editmode-actionbar-highlight-nineslice-edgebottom", 0.3, 0.7, 1, 0.9)
+  bot:SetPoint("TOPLEFT", corners.BOTTOMLEFT, "TOPRIGHT"); bot:SetPoint("BOTTOMRIGHT", corners.BOTTOMRIGHT, "BOTTOMLEFT")
+  local lft = Piece(sel, "BORDER", "!editmode-actionbar-highlight-nineslice-edgeleft", 0.3, 0.7, 1, 0.9)
+  lft:SetPoint("TOPLEFT", corners.TOPLEFT, "BOTTOMLEFT"); lft:SetPoint("BOTTOMRIGHT", corners.BOTTOMLEFT, "TOPRIGHT")
+  local rgt = Piece(sel, "BORDER", "!editmode-actionbar-highlight-nineslice-edgeright", 0.3, 0.7, 1, 0.9)
+  rgt:SetPoint("TOPLEFT", corners.TOPRIGHT, "BOTTOMLEFT"); rgt:SetPoint("BOTTOMRIGHT", corners.BOTTOMRIGHT, "TOPRIGHT")
+end
+
+-- settings panel widgets
+function EM.Check(p, y, text, get, set)
+  local cb = CreateFrame("CheckButton", nil, p, "UICheckButtonTemplate")
+  cb:SetSize(24, 24); cb:SetPoint("TOPLEFT", 12, y)
+  local fs = cb:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); fs:SetPoint("LEFT", cb, "RIGHT", 2, 0); fs:SetText(text)
+  cb:SetScript("OnShow", function(s) s:SetChecked(get() and true or false) end)
+  cb:SetScript("OnClick", function(s) set(s:GetChecked() and true or false) end)
+  cb:SetChecked(get() and true or false)
+  return y - 28
+end
+function EM.Slider(p, y, text, lo, hi, step, get, set, fmt)
+  local fs = p:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); fs:SetPoint("TOPLEFT", 16, y)
+  local val = p:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); val:SetPoint("TOPRIGHT", -16, y)
+  fs:SetText(text)
+  local s = CreateFrame("Slider", nil, p)
+  s:SetOrientation("HORIZONTAL"); s:SetSize(196, 16); s:SetPoint("TOPLEFT", 16, y - 18)
+  s:SetMinMaxValues(lo, hi); s:SetValueStep(step); if s.SetObeyStepOnDrag then s:SetObeyStepOnDrag(true) end
+  local bg = s:CreateTexture(nil, "BACKGROUND"); bg:SetColorTexture(0, 0, 0, 0.5)
+  bg:SetPoint("LEFT", 0, 0); bg:SetPoint("RIGHT", 0, 0); bg:SetHeight(6)
+  s:SetThumbTexture("Interface\\Buttons\\UI-SliderBar-Button-Horizontal")
+  local function show(v) val:SetText((fmt or "%d%%"):format(v * 100 + 0.5)) end
+  s:SetScript("OnValueChanged", function(_, v) v = math.floor(v / step + 0.5) * step; show(v); set(v) end)
+  s:SetScript("OnShow", function(self) self:SetValue(get()); show(get()) end)
+  s:SetValue(get()); show(get())
+  return y - 42
+end
+function EM.Button(p, y, text, fn)
+  local b = CreateFrame("Button", nil, p, "UIPanelButtonTemplate")
+  b:SetSize(140, 22); b:SetPoint("TOP", 0, y); b:SetText(text); b:SetScript("OnClick", fn)
+  return y - 28
+end
+
+local panel
+local function Panel()
+  if panel then return panel end
+  panel = CreateFrame("Frame", nil, UIParent, BackdropTemplateMixin and "BackdropTemplate" or nil)
+  panel:SetFrameStrata("DIALOG"); panel:SetSize(228, 100); panel:SetClampedToScreen(true); panel:EnableMouse(true)
+  if panel.SetBackdrop then
+    panel:SetBackdrop({ bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark", edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+      tile = true, tileSize = 32, edgeSize = 24, insets = { left = 6, right = 6, top = 6, bottom = 6 } })
+  end
+  panel.title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal"); panel.title:SetPoint("TOP", 0, -12)
+  local x = CreateFrame("Button", nil, panel, "UIPanelCloseButton"); x:SetPoint("TOPRIGHT", 0, 0)
+  x:SetScript("OnClick", function() EM.Select(nil) end)
+  panel:Hide()
+  return panel
+end
+
+function EM.Select(item)
+  for _, it in ipairs(EM.items) do
+    if it.sel.label then it.sel.label:SetTextColor(it == item and 1 or 0.8, it == item and 0.82 or 0.8, it == item and 0 or 0.8) end
+    if it.content then it.content:Hide() end
+  end
+  local p = Panel()
+  if not item then p:Hide() return end
+  p.title:SetText(item.label)
+  if not item.content then
+    item.content = CreateFrame("Frame", nil, p); item.content:SetAllPoints()
+    item.height = -(item.o.panel(item.content, -36)) + 10
+  end
+  item.content:Show()
+  p:SetHeight(item.height)
+  p:ClearAllPoints()
+  local cx = item.frame:GetCenter()
+  if cx and cx > (UIParent:GetWidth() or 0) / 2 then p:SetPoint("TOPRIGHT", item.frame, "TOPLEFT", -12, 0)
+  else p:SetPoint("TOPLEFT", item.frame, "TOPRIGHT", 12, 0) end
+  p:Show()
+end
+
+-- magnetism: snap to Blizzard's Edit Mode frames, the screen, the grid and other addons' Edit Mode frames
+_G.EditModeExtraFrames = _G.EditModeExtraFrames or {}
+local SNAP = 12
+local function SnapOn()
+  local m = EditModeManagerFrame
+  if not m then return false end
+  if m.IsSnapEnabled then local ok, v = pcall(m.IsSnapEnabled, m); if ok then return v and true or false end end
+  local cb = m.EnableSnapCheckButton
+  if cb and cb.IsControlChecked then local ok, v = pcall(cb.IsControlChecked, cb); if ok then return v end end
+  if cb and cb.GetChecked then return cb:GetChecked() and true or false end
+  return true
+end
+local function Rect(fr)
+  if not (fr and fr.IsVisible and fr:IsVisible() and fr:GetLeft()) then return end
+  local k = (fr:GetEffectiveScale() or 1) / (UIParent:GetEffectiveScale() or 1)
+  local l, b, w, h = fr:GetLeft() * k, fr:GetBottom() * k, fr:GetWidth() * k, fr:GetHeight() * k
+  return l, b, w, h
+end
+local function Lines(self)
+  local xs, ys = {}, {}
+  local W, H = UIParent:GetWidth(), UIParent:GetHeight()
+  local function add(fr)
+    if fr == self then return end
+    local l, b, w, h = Rect(fr)
+    if l then
+      xs[#xs + 1] = l; xs[#xs + 1] = l + w; xs[#xs + 1] = l + w / 2
+      ys[#ys + 1] = b; ys[#ys + 1] = b + h; ys[#ys + 1] = b + h / 2
+    end
+  end
+  xs[#xs + 1] = 0; xs[#xs + 1] = W / 2; xs[#xs + 1] = W
+  ys[#ys + 1] = 0; ys[#ys + 1] = H / 2; ys[#ys + 1] = H
+  local m = EditModeManagerFrame
+  for _, fr in ipairs((m and m.registeredSystemFrames) or {}) do add(fr) end
+  for _, fr in ipairs(_G.EditModeExtraFrames) do add(fr) end
+  -- grid lines run out from the screen center
+  local grid = m and m.Grid
+  if grid and grid.IsShown and grid:IsShown() then
+    local sp = grid.gridSpacing or m.gridSpacing
+    if type(sp) == "number" and sp > 4 then
+      for i = -math.ceil(W / sp), math.ceil(W / sp) do local x = W / 2 + i * sp; if x >= 0 and x <= W then xs[#xs + 1] = x end end
+      for i = -math.ceil(H / sp), math.ceil(H / sp) do local y = H / 2 + i * sp; if y >= 0 and y <= H then ys[#ys + 1] = y end end
+    end
+  end
+  return xs, ys
+end
+local function Best(edges, lines)
+  local bd, bl
+  for _, e in ipairs(edges) do
+    for _, ln in ipairs(lines) do
+      local d = ln - e
+      if math.abs(d) <= SNAP and (not bd or math.abs(d) < math.abs(bd)) then bd, bl = d, ln end
+    end
+  end
+  return bd, bl
+end
+local function SnapOffset(frame)
+  local l, b, w, h = Rect(frame)
+  if not l then return end
+  local xs, ys = Lines(frame)
+  local dx, lx = Best({ l, l + w, l + w / 2 }, xs)
+  local dy, ly = Best({ b, b + h, b + h / 2 }, ys)
+  return dx, dy, lx, ly, l, b
+end
+-- guide lines while dragging
+local guide = CreateFrame("Frame", nil, UIParent)
+guide:SetFrameStrata("TOOLTIP"); guide:SetAllPoints(); guide:Hide()
+guide.v = guide:CreateTexture(nil, "OVERLAY"); guide.v:SetColorTexture(0.3, 0.8, 1, 0.9); guide.v:SetWidth(2)
+guide.h = guide:CreateTexture(nil, "OVERLAY"); guide.h:SetColorTexture(0.3, 0.8, 1, 0.9); guide.h:SetHeight(2)
+guide:SetScript("OnUpdate", function(g)
+  local fr = g.frame
+  if not (fr and fr.emMoving) or not SnapOn() then g.v:Hide(); g.h:Hide(); return end
+  local _, _, lx, ly = SnapOffset(fr)
+  if lx then g.v:ClearAllPoints(); g.v:SetPoint("TOP", UIParent, "TOPLEFT", lx, 0); g.v:SetPoint("BOTTOM", UIParent, "BOTTOMLEFT", lx, 0); g.v:Show() else g.v:Hide() end
+  if ly then g.h:ClearAllPoints(); g.h:SetPoint("LEFT", UIParent, "BOTTOMLEFT", 0, ly); g.h:SetPoint("RIGHT", UIParent, "BOTTOMRIGHT", 0, ly); g.h:Show() else g.h:Hide() end
+end)
+-- after a drag: snap (if on) and always anchor by the TOP-left corner, so collapsing/growing keeps the top in place
+local function SnapNow(frame, noSnap)
+  local l, b, w, h = Rect(frame)
+  if not l then return end
+  local dx, dy
+  if not noSnap and SnapOn() then dx, dy = SnapOffset(frame) end
+  local k = (frame:GetEffectiveScale() or 1) / (UIParent:GetEffectiveScale() or 1)
+  frame:ClearAllPoints()
+  frame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", (l + (dx or 0)) / k, (b + h + (dy or 0)) / k)
+end
+EM.TopAnchor = function(frame) SnapNow(frame, true) end
+
+function EM.Attach(frame, label, o)
+  local sel = CreateFrame("Button", nil, frame)
+  sel:SetAllPoints(); sel:SetFrameStrata("HIGH"); sel:Hide()
+  Highlight(sel)
+  sel.label = sel:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); sel.label:SetPoint("CENTER"); sel.label:SetText(label)
+  sel:RegisterForDrag("LeftButton"); sel:RegisterForClicks("LeftButtonUp")
+  local item = { frame = frame, sel = sel, label = label, o = o }
+  sel:SetScript("OnDragStart", function()
+    frame.emMoving = true; frame:SetMovable(true); frame:StartMoving()
+    guide.frame = frame; guide:Show()
+  end)
+  sel:SetScript("OnDragStop", function()
+    frame:StopMovingOrSizing(); frame.emMoving = nil
+    guide:Hide(); guide.frame = nil
+    SnapNow(frame)
+    local p, _, rp, x, y = frame:GetPoint()
+    o.save({ p, rp, x, y }, EM.Layout())
+    EM.Select(item)
+  end)
+  sel:SetScript("OnClick", function() EM.Select(item) end)
+  EM.items[#EM.items + 1] = item
+  _G.EditModeExtraFrames[#_G.EditModeExtraFrames + 1] = frame
+  if EM.Active() then o.enter(); sel:Show() end
+  return item
+end
+
+local function Enter() for _, it in ipairs(EM.items) do it.o.enter(); it.sel:Show() end end
+local function Exit()
+  EM.Select(nil)
+  for _, it in ipairs(EM.items) do it.sel:Hide(); it.o.exit() end
+end
+local function Relayout() for _, it in ipairs(EM.items) do it.o.apply() end end
+if EventRegistry and EventRegistry.RegisterCallback then
+  EventRegistry:RegisterCallback("EditMode.Enter", Enter, EM)
+  EventRegistry:RegisterCallback("EditMode.Exit", Exit, EM)
+end
+if EditModeManagerFrame then
+  if EditModeManagerFrame.EnterEditMode then hooksecurefunc(EditModeManagerFrame, "EnterEditMode", Enter) end
+  if EditModeManagerFrame.ExitEditMode then hooksecurefunc(EditModeManagerFrame, "ExitEditMode", Exit) end
+end
+local emEv = CreateFrame("Frame")
+pcall(emEv.RegisterEvent, emEv, "EDIT_MODE_LAYOUTS_UPDATED")
+emEv:SetScript("OnEvent", function() C_Timer.After(0, Relayout) end)
+
 local af = CreateFrame("Button", "QuestLedgerForeverArrow", UIParent)
 af:SetSize(180, 80)
 af:SetPoint("TOP", UIParent, "TOP", 0, -140)
@@ -1501,7 +1755,8 @@ af:RegisterForDrag("LeftButton"); af:RegisterForClicks("RightButtonUp")
 af:SetScript("OnDragStart", af.StartMoving)
 af:SetScript("OnDragStop", function(s)
   s:StopMovingOrSizing()
-  local p, _, rp, x, y = s:GetPoint(); DB.arrowPos = { p, rp, x, y }
+  local p, _, rp, x, y = s:GetPoint()
+  DB.arrowPosL = DB.arrowPosL or {}; DB.arrowPosL[EM.Layout()] = { p, rp, x, y }
 end)
 af:SetScript("OnClick", function() arrowTarget = nil; af:Hide() end)
 af:SetScript("OnEnter", function(s)
@@ -1521,6 +1776,27 @@ af.title:SetWidth(180); af.title:SetWordWrap(false)
 af.dist = af:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 af.dist:SetPoint("TOP", af.title, "BOTTOM", 0, -1)
 af:Hide()
+
+-- position (per Edit Mode layout), size and which text lines show
+local function ArrowPos()
+  -- the old single position moves into the layout that's active the first time; layouts with nothing saved use the default spot
+  if DB.arrowPos then
+    DB.arrowPosL = DB.arrowPosL or {}
+    local L = EM.Layout()
+    if DB.arrowPosL[L] == nil then DB.arrowPosL[L] = DB.arrowPos end
+    DB.arrowPos = nil
+  end
+  local v = DB.arrowPosL and DB.arrowPosL[EM.Layout()]
+  return v or nil
+end
+local function ApplyArrow()
+  if not DB then return end
+  af:SetScale(DB.arrowScale or 1)
+  local p = ArrowPos()
+  af:ClearAllPoints()
+  if p then af:SetPoint(p[1], UIParent, p[2], p[3], p[4]) else af:SetPoint("TOP", UIParent, "TOP", 0, -140) end
+  af.title:SetShown(not DB.arrowNoTitle); af.dist:SetShown(not DB.arrowNoDist)
+end
 
 local function Locate(t)
   local m, x, y = QuestLocation(t.qid)
@@ -1571,12 +1847,13 @@ end
 
 local tick, relocate = 0, 0
 af:SetScript("OnUpdate", function(s, dt)
+  if s.preview and not arrowTarget then return end -- Edit Mode preview
   tick = tick + dt; relocate = relocate + dt
   if tick < 0.05 then return end
   tick = 0
   local t = arrowTarget
-  if not t or not IndexForQuest(t.qid) then arrowTarget = nil; s:Hide(); return end
-  if relocate > 2 then relocate = 0; Locate(t) end -- objectives move as you progress
+  if not t or (not t.fixed and not IndexForQuest(t.qid)) then arrowTarget = nil; s:Hide(); return end
+  if relocate > 2 and not t.fixed then relocate = 0; Locate(t) end -- objectives move as you progress
   local cont, px, py = PlayerWorldPos()
   if not t.cont then s.arrow:Hide(); s.dist:SetText("|cff999999No location for this quest|r"); return end
   if not cont then s.arrow:Hide(); s.dist:SetText("|cff999999No position here|r"); return end
@@ -1605,12 +1882,54 @@ function QLF_OwnArrow(qid, announce)
   if not arrowTarget.cont and announce then
     print("|cffffd200Quest Ledger:|r no map location known for " .. (title or "this quest") .. ".")
   end
-  if DB.arrowPos then af:ClearAllPoints(); af:SetPoint(DB.arrowPos[1], UIParent, DB.arrowPos[2], DB.arrowPos[3], DB.arrowPos[4]) end
+  ApplyArrow()
   af.title:SetText(title or "")
   relocate = 0
   af:Show()
 end
 function QLF_HideArrow() arrowTarget = nil; af:Hide() end
+-- point the arrow at a map spot (used by Objective Forever for a party member's quest)
+-- Edit Mode: the arrow shows as "Quest Arrow" with Blizzard's highlight
+EM.Attach(af, "Quest Arrow", {
+  save = function(pos, layout) DB.arrowPosL = DB.arrowPosL or {}; DB.arrowPosL[layout] = pos end,
+  apply = ApplyArrow,
+  enter = function()
+    if not DB then return end
+    ApplyArrow()
+    if not af:IsShown() or not arrowTarget then
+      af.preview = true
+      af.title:SetText("Quest Arrow"); af.arrow:Show(); SetArrowAngle(af.arrow, 0)
+      af.dist:SetText(Units() == "m" and "120 m" or "130 yd")
+      af:Show()
+    end
+  end,
+  exit = function()
+    af.preview = nil
+    if not arrowTarget then af:Hide() end
+    ApplyArrow()
+  end,
+  panel = function(p, y)
+    y = EM.Slider(p, y, "Size", 0.5, 2, 0.05, function() return DB.arrowScale or 1 end,
+      function(v) DB.arrowScale = v; ApplyArrow() end)
+    y = EM.Check(p, y, "Show quest name", function() return not DB.arrowNoTitle end,
+      function(v) DB.arrowNoTitle = not v; ApplyArrow() end)
+    y = EM.Check(p, y, "Show distance", function() return not DB.arrowNoDist end,
+      function(v) DB.arrowNoDist = not v; ApplyArrow() end)
+    y = EM.Button(p, y - 4, "Reset position", function()
+      DB.arrowPosL = DB.arrowPosL or {}; DB.arrowPosL[EM.Layout()] = false; ApplyArrow()
+    end)
+    return y
+  end,
+})
+
+function QLF_PointArrow(uiMap, x, y, title)
+  if not (uiMap and x and y) then return end
+  arrowTarget = { fixed = true, title = title }
+  arrowTarget.cont, arrowTarget.wx, arrowTarget.wy = WorldPos(uiMap, x, y)
+  ApplyArrow()
+  af.title:SetText(title or "")
+  af:Show()
+end
 
 ---------------------------------------------------------------- right-click menu
 local qm = CreateFrame("Frame", "QuestLedgerForeverMenu", UIParent, BackdropTemplateMixin and "BackdropTemplate" or nil)
